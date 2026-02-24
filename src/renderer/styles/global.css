@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --odin-bg-primary: #0a0e14;
+  --odin-bg-secondary: #111822;
+  --odin-bg-tertiary: #1a2332;
+  --odin-bg-hover: #1f2b3d;
+  --odin-border: #1e2d3d;
+  --odin-border-bright: #2a3f55;
+  --odin-cyan: #00e5ff;
+  --odin-cyan-dim: #006680;
+  --odin-green: #00ff88;
+  --odin-amber: #ffab00;
+  --odin-red: #ff3d3d;
+  --odin-purple: #b388ff;
+  --odin-text-primary: #e0e6ed;
+  --odin-text-secondary: #8899aa;
+  --odin-text-tertiary: #7a8a9a;
+}
+
+@layer base {
+  * { @apply border-odin-border; }
+  body { @apply bg-odin-bg-primary text-odin-text-primary font-mono antialiased; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-odin-bg-primary; }
+  ::-webkit-scrollbar-thumb { @apply bg-odin-border-bright rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-odin-cyan-dim; }
+}
+
+/* Override Leaflet for dark theme */
+.leaflet-container { background: var(--odin-bg-primary) !important; }
+.leaflet-control-zoom a { background: var(--odin-bg-secondary) !important; color: var(--odin-cyan) !important; border-color: var(--odin-border) !important; }
+.leaflet-control-zoom a:hover { background: var(--odin-bg-tertiary) !important; }
+.leaflet-popup-content-wrapper { background: var(--odin-bg-secondary) !important; color: var(--odin-text-primary) !important; border: 1px solid var(--odin-border); }
+.leaflet-popup-tip { background: var(--odin-bg-secondary) !important; }
+
+/* Scanline CRT effect overlay (optional, applied to Shell) */
+.scanline-overlay::after {
+  content: '';
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,229,255,0.015) 2px, rgba(0,229,255,0.015) 4px);
+  pointer-events: none; z-index: 9999;
+}
