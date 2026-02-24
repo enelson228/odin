@@ -112,7 +112,7 @@ export function registerIpcHandlers(
       }
       const req = request as Record<string, unknown>;
       const validatedPath = validateExportPath(req.filePath);
-      const exportRequest = { ...(req as ExportRequest), filePath: validatedPath };
+      const exportRequest = { ...(req as unknown as ExportRequest), filePath: validatedPath };
       await exportService.run(exportRequest);
       return { success: true, filePath: validatedPath };
     } catch (err) {

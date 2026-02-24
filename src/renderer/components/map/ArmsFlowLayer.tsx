@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
-import type { ArmsTransfer, Country } from '../../../../shared/types';
+import type { ArmsTransfer, Country } from '@shared/types';
 
 interface ArmsFlowLayerProps {
   transfers: ArmsTransfer[];

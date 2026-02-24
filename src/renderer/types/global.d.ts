@@ -8,7 +8,7 @@ import {
   ArmsFilters,
   SyncStatus,
   ExportRequest,
-  AppSettings,
+  AppSettingsPublic,
 } from '../../shared/types';
 
 interface OdinApi {
@@ -22,8 +22,8 @@ interface OdinApi {
   getSyncStatus(): Promise<SyncStatus[]>;
   runExport(request: ExportRequest): Promise<{ success: boolean; filePath?: string; error?: string }>;
   chooseSavePath(defaultName: string): Promise<string | null>;
-  getSettings(): Promise<AppSettings>;
-  updateSettings(settings: Partial<AppSettings>): Promise<void>;
+  getSettings(): Promise<AppSettingsPublic>;
+  updateSettings(settings: Record<string, unknown>): Promise<void>;
   onSyncProgress(callback: (status: SyncStatus) => void): () => void;
 }
 

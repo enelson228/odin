@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet.markercluster';
-import type { ConflictEvent } from '../../../shared/types';
+import type { ConflictEvent } from '@shared/types';
 import { formatDate } from '../../lib/format';
 
 const ODIN_COLORS = {
@@ -27,7 +27,8 @@ export function ConflictLayer() {
   const map = useMap();
   const [conflicts, setConflicts] = useState<ConflictEvent[]>([]);
   // Use ref to avoid closure capturing the wrong cluster instance during cleanup
-  const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const clusterRef = useRef<any>(null);
 
   useEffect(() => {
     const fetchConflicts = async () => {
@@ -51,12 +52,14 @@ export function ConflictLayer() {
       clusterRef.current = null;
     }
 
-    const cluster = L.markerClusterGroup({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cluster = (L as any).markerClusterGroup({
       maxClusterRadius: 50,
       spiderfyOnMaxZoom: true,
       showCoverageOnHover: false,
       zoomToBoundsOnClick: true,
-      iconCreateFunction: (c) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      iconCreateFunction: (c: any) => {
         const count = c.getChildCount();
         return L.divIcon({
           html: `<div style="background: rgba(0, 229, 255, 0.2); border: 2px solid ${ODIN_COLORS.default}; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; color: ${ODIN_COLORS.default}; font-weight: bold; font-size: 12px;">${count}</div>`,

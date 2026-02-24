@@ -265,9 +265,9 @@ function buildPointFeature(
         return null;
     }
 
-    const properties = { ...record, _dataType: featureType };
-    delete properties.latitude;
-    delete properties.longitude;
+    const properties: Record<string, unknown> = { ...record, _dataType: featureType };
+    delete properties['latitude'];
+    delete properties['longitude'];
 
     return {
         type: 'Feature',
