@@ -8,22 +8,24 @@ import type {
   ConflictFilters,
   ArmsFilters,
   SyncStatus,
+  SyncLogEntry,
   AppSettings,
 } from '@shared/types';
 import schemaSql from './schema.sql?raw';
+import { runMigrations } from './migrations';
 
 const DEFAULT_SETTINGS: AppSettings = {
   acledEmail: '',
   acledPassword: '',
-  acledSessionCookie: '',
-  acledCsrfToken: '',
+  acledAccessToken: '',
+  acledRefreshToken: '',
   acledTokenExpiry: 0,
+  acledRefreshTokenExpiry: 0,
   syncIntervalMinutes: 360,
   mapDefaultCenter: [20, 0],
   mapDefaultZoom: 3,
+  displayTimezone: 'UTC',
 };
-
-const CURRENT_SCHEMA_VERSION = 1;
 
 export class DatabaseService {
   private db: Database.Database;
@@ -35,22 +37,11 @@ export class DatabaseService {
   }
 
   /**
-   * Initialize the database schema.
+   * Initialize the database schema and run pending migrations.
    * The SQL is bundled at build time via Vite's ?raw import.
    */
   initSchema(): void {
     this.db.exec(schemaSql);
-
-    // Record schema version if not already present
-    const row = this.db
-      .prepare('SELECT version FROM schema_version WHERE version = ?')
-      .get(CURRENT_SCHEMA_VERSION) as { version: number } | undefined;
-
-    if (!row) {
-      this.db
-        .prepare('INSERT INTO schema_version (version) VALUES (?)')
-        .run(CURRENT_SCHEMA_VERSION);
-    }
 
     // Seed default settings if settings table is empty
     const settingsCount = this.db
@@ -66,6 +57,9 @@ export class DatabaseService {
       });
       seedSettings();
     }
+
+    // Run pending schema migrations (including FK removal from conflict_events)
+    runMigrations(this.db);
   }
 
   // ─── Country Queries ────────────────────────────────────
@@ -190,7 +184,10 @@ export class DatabaseService {
   // ─── Sync Status ────────────────────────────────────────
 
   getSyncStatus(): SyncStatus[] {
-    const adapters = ['acled', 'worldbank', 'overpass', 'cia-factbook'];
+    const adapters = [
+      'acled', 'worldbank', 'overpass', 'cia-factbook',
+      'sipri', 'natural-earth', 'ucdp',
+    ];
     const result: SyncStatus[] = [];
 
     for (const adapter of adapters) {
@@ -214,7 +211,9 @@ export class DatabaseService {
         result.push({
           adapter: lastEntry.adapter,
           lastSync: lastEntry.completed_at ?? lastEntry.started_at,
-          status: lastEntry.status as SyncStatus['status'],
+          status: lastEntry.status === 'running'
+            ? 'syncing'
+            : lastEntry.status as SyncStatus['status'],
           recordCount: lastEntry.records_upserted,
           errorMessage: lastEntry.error_message ?? undefined,
         });
@@ -310,6 +309,9 @@ export class DatabaseService {
   }
 
   upsertConflicts(events: ConflictEvent[]): number {
+    // Per-row try/catch inside the transaction: ACLED returns ~400k rows and
+    // some may have null iso3 or violate other constraints. One bad row must
+    // not abort the entire batch.
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO conflict_events
         (id, iso3, event_date, event_type, sub_event_type, actor1, actor2,
@@ -322,23 +324,27 @@ export class DatabaseService {
     let count = 0;
     const upsert = this.db.transaction(() => {
       for (const event of events) {
-        stmt.run({
-          id: event.id,
-          iso3: event.iso3,
-          event_date: event.event_date,
-          event_type: event.event_type,
-          sub_event_type: event.sub_event_type,
-          actor1: event.actor1,
-          actor2: event.actor2,
-          location: event.location,
-          latitude: event.latitude,
-          longitude: event.longitude,
-          fatalities: event.fatalities,
-          notes: event.notes,
-          source: event.source,
-          source_scale: event.source_scale,
-        });
-        count++;
+        try {
+          stmt.run({
+            id: event.id,
+            iso3: event.iso3,
+            event_date: event.event_date,
+            event_type: event.event_type,
+            sub_event_type: event.sub_event_type,
+            actor1: event.actor1,
+            actor2: event.actor2,
+            location: event.location,
+            latitude: event.latitude,
+            longitude: event.longitude,
+            fatalities: event.fatalities,
+            notes: event.notes,
+            source: event.source,
+            source_scale: event.source_scale,
+          });
+          count++;
+        } catch (err) {
+          console.warn(`[DB] Skipping conflict event ${event.id}: ${err instanceof Error ? err.message : err}`);
+        }
       }
     });
 
@@ -445,19 +451,76 @@ export class DatabaseService {
 
   // ─── Sync Logging ───────────────────────────────────────
 
-  logSync(
-    adapter: string,
-    status: string,
-    fetched: number,
-    upserted: number,
-    error?: string,
-  ): void {
+  /**
+   * Record that a sync has started. Returns the row id so the caller
+   * can later update the same row via logSyncComplete / logSyncError.
+   */
+  logSyncStart(adapter: string): number {
+    const result = this.db
+      .prepare(
+        `INSERT INTO sync_log (adapter, status, records_fetched, records_upserted)
+         VALUES (?, 'running', 0, 0)`,
+      )
+      .run(adapter);
+    return Number(result.lastInsertRowid);
+  }
+
+  /**
+   * Mark a sync log entry as successfully completed.
+   */
+  logSyncComplete(id: number, fetched: number, upserted: number): void {
     this.db
       .prepare(
-        `INSERT INTO sync_log (adapter, status, records_fetched, records_upserted, error_message, completed_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+        `UPDATE sync_log
+            SET status = 'completed',
+                completed_at = datetime('now'),
+                records_fetched = ?,
+                records_upserted = ?
+          WHERE id = ?`,
       )
-      .run(adapter, status, fetched, upserted, error ?? null);
+      .run(fetched, upserted, id);
+  }
+
+  /**
+   * Mark a sync log entry as errored.
+   */
+  logSyncError(id: number, message: string): void {
+    this.db
+      .prepare(
+        `UPDATE sync_log
+            SET status = 'error',
+                completed_at = datetime('now'),
+                error_message = ?
+          WHERE id = ?`,
+      )
+      .run(message, id);
+  }
+
+  getSyncLog(limit = 100): SyncLogEntry[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM sync_log ORDER BY started_at DESC LIMIT ?`,
+      )
+      .all(limit) as SyncLogEntry[];
+  }
+
+  clearSyncLog(): void {
+    this.db.prepare('DELETE FROM sync_log').run();
+  }
+
+  /**
+   * Get the completed_at timestamp of the last successful sync for an adapter.
+   * Returns null if no successful sync has been recorded.
+   */
+  getLastSuccessfulSync(adapter: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT completed_at FROM sync_log
+          WHERE adapter = ? AND status = 'completed'
+          ORDER BY started_at DESC LIMIT 1`,
+      )
+      .get(adapter) as { completed_at: string } | undefined;
+    return row?.completed_at ?? null;
   }
 
   // ─── Helpers ────────────────────────────────────────────

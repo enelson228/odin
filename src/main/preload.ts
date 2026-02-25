@@ -8,13 +8,18 @@ import type {
   ConflictFilters,
   ArmsFilters,
   SyncStatus,
+  SyncLogEntry,
   AppSettings,
+  AppSettingsPublic,
   ExportRequest,
 } from '@shared/types';
 
 /**
  * The typed API exposed to the renderer process via contextBridge.
  * Access in renderer via `window.odinApi`.
+ *
+ * Security note: getSettings() returns AppSettingsPublic — credentials
+ * (tokens, passwords) are NEVER sent from main → renderer.
  */
 export interface OdinApi {
   // ─── Data Queries ─────────────────────────────────────
@@ -26,15 +31,17 @@ export interface OdinApi {
   getIndicators(iso3: string): Promise<WorldBankIndicator[]>;
 
   // ─── Sync ─────────────────────────────────────────────
-  startSync(adapter?: string): Promise<void>;
+  startSync(adapter?: string): Promise<{ success: boolean }>;
   getSyncStatus(): Promise<SyncStatus[]>;
+  getSyncLog(limit?: number): Promise<SyncLogEntry[]>;
+  clearSyncLog(): Promise<void>;
 
   // ─── Export ───────────────────────────────────────────
   runExport(request: ExportRequest): Promise<{ success: boolean; filePath?: string; error?: string }>;
   chooseSavePath(defaultName: string): Promise<string | null>;
 
   // ─── Settings ─────────────────────────────────────────
-  getSettings(): Promise<AppSettings>;
+  getSettings(): Promise<AppSettingsPublic>;
   updateSettings(partial: Partial<AppSettings>): Promise<void>;
 
   // ─── Sync Event Listener ──────────────────────────────
@@ -64,6 +71,10 @@ const odinApi: OdinApi = {
   startSync: (adapter?: string) => ipcRenderer.invoke('sync:start', adapter),
 
   getSyncStatus: () => ipcRenderer.invoke('sync:status'),
+
+  getSyncLog: (limit?: number) => ipcRenderer.invoke('sync:get-log', limit),
+
+  clearSyncLog: () => ipcRenderer.invoke('sync:clear-log'),
 
   // ─── Export ───────────────────────────────────────────
 

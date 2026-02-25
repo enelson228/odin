@@ -1,10 +1,13 @@
 import { BrowserWindow } from 'electron';
 import type { DatabaseService } from '@main/services/database/db';
 import type { SyncStatus } from '@shared/types';
-import { AcledAdapter, AcledSession } from '@main/services/api/acled';
+import { AcledAdapter, AcledTokens } from '@main/services/api/acled';
+import { UCDPAdapter } from '@main/services/api/ucdp';
 import { WorldBankAdapter } from '@main/services/api/world-bank';
 import { OverpassAdapter } from '@main/services/api/overpass';
 import { CiaFactbookAdapter } from '@main/services/api/cia-factbook';
+import { SipriAdapter } from '@main/services/api/sipri';
+import { NaturalEarthAdapter } from '@main/services/api/natural-earth';
 
 /**
  * A sync adapter bridges an API adapter to the database.
@@ -34,7 +37,35 @@ export class SyncScheduler {
    * Call this after settings are available so API keys can be read.
    */
   initAdapters(): void {
-    const settings = this.db.getSettings();
+    // Natural Earth country boundaries — seed the countries table first
+    // so downstream adapters can do lookups against it
+    this.adapters.set('natural-earth', {
+      name: 'natural-earth',
+      async run(db: DatabaseService) {
+        const adapter = new NaturalEarthAdapter();
+        const meta = adapter.getAllCountryMeta();
+
+        const countries = meta.map((m) => ({
+          iso3: m.iso3,
+          iso2: m.iso2,
+          name: m.name,
+          region: m.region,
+          subregion: m.subregion,
+          population: m.population,
+          gdp: m.gdp,
+          area_sq_km: null as number | null,
+          capital: null as string | null,
+          government_type: null as string | null,
+          military_expenditure_pct_gdp: null as number | null,
+          active_personnel: null as number | null,
+          reserve_personnel: null as number | null,
+          last_updated: new Date().toISOString(),
+        }));
+
+        const upserted = db.upsertCountries(countries);
+        return { fetched: countries.length, upserted };
+      },
+    });
 
     // ACLED conflict events adapter (OAuth2 password grant → Bearer token)
     this.adapters.set('acled', {
@@ -50,30 +81,54 @@ export class SyncScheduler {
           );
         }
 
-        // Pass any previously stored session to avoid re-logging in every sync
-        const existingSession: AcledSession | undefined =
-          s.acledSessionCookie
+        // Restore previously stored OAuth2 tokens to avoid re-authenticating
+        const existingTokens: AcledTokens | undefined =
+          s.acledAccessToken
             ? {
-                sessionCookie: s.acledSessionCookie,
-                csrfToken: s.acledCsrfToken,
-                expiresAt: s.acledTokenExpiry,
+                accessToken: s.acledAccessToken,
+                refreshToken: s.acledRefreshToken,
+                tokenExpiry: s.acledTokenExpiry,
+                refreshTokenExpiry: s.acledRefreshTokenExpiry,
               }
             : undefined;
 
-        const adapter = new AcledAdapter(acledEmail, acledPassword, existingSession);
-        const events = await adapter.fetchAllEvents();
+        // Incremental sync: only fetch events since the last successful ACLED sync
+        const sinceDate = db.getLastSuccessfulSync('acled') ?? undefined;
+
+        const adapter = new AcledAdapter(acledEmail, acledPassword, existingTokens);
+        const events = await adapter.fetchAllEvents(sinceDate);
         const upserted = db.upsertConflicts(events);
 
-        // Persist any new session so the next sync can reuse it
-        const newSession = adapter.getSession();
-        if (newSession) {
+        // Persist updated tokens so the next sync can reuse them
+        const newTokens = adapter.getTokens();
+        if (newTokens) {
           db.updateSettings({
-            acledSessionCookie: newSession.sessionCookie,
-            acledCsrfToken: newSession.csrfToken,
-            acledTokenExpiry: newSession.expiresAt,
+            acledAccessToken: newTokens.accessToken,
+            acledRefreshToken: newTokens.refreshToken,
+            acledTokenExpiry: newTokens.tokenExpiry,
+            acledRefreshTokenExpiry: newTokens.refreshTokenExpiry,
           });
         }
 
+        return { fetched: events.length, upserted };
+      },
+    });
+
+    // UCDP conflict events adapter (fallback / cross-check)
+    this.adapters.set('ucdp', {
+      name: 'ucdp',
+      async run(db: DatabaseService) {
+        // Build a country-name → iso3 map for the normalize() method
+        const countries = db.getCountries();
+        const countryMap = new Map<string, string>();
+        for (const c of countries) {
+          countryMap.set(c.name.toLowerCase(), c.iso3);
+        }
+
+        const adapter = new UCDPAdapter();
+        adapter.setCountryMap(countryMap);
+        const events = await adapter.fetchAllEvents();
+        const upserted = db.upsertConflicts(events);
         return { fetched: events.length, upserted };
       },
     });
@@ -107,15 +162,13 @@ export class SyncScheduler {
         const adapter = new CiaFactbookAdapter();
         const profiles = await adapter.fetchAllCountries();
 
-        // The Factbook returns Partial<Country> records.
-        // We need to merge them with existing country data or insert new stubs.
+        // Merge Factbook fields into existing country records
         let upserted = 0;
         for (const profile of profiles) {
           if (!profile.iso3) continue;
 
           const existing = db.getCountry(profile.iso3);
           if (existing) {
-            // Merge Factbook fields into existing country record
             const merged = {
               ...existing,
               area_sq_km: profile.area_sq_km ?? existing.area_sq_km,
@@ -126,12 +179,11 @@ export class SyncScheduler {
             db.upsertCountries([merged]);
             upserted++;
           } else {
-            // Create a minimal country record from the Factbook data
             db.upsertCountries([
               {
                 iso3: profile.iso3,
                 iso2: '',
-                name: profile.iso3, // Placeholder — will be enriched by WorldBank
+                name: profile.iso3,
                 region: '',
                 subregion: '',
                 population: null,
@@ -150,6 +202,17 @@ export class SyncScheduler {
         }
 
         return { fetched: profiles.length, upserted };
+      },
+    });
+
+    // SIPRI arms transfers adapter
+    this.adapters.set('sipri', {
+      name: 'sipri',
+      async run(db: DatabaseService) {
+        const adapter = new SipriAdapter();
+        const transfers = await adapter.fetchFromUrl();
+        const upserted = db.upsertArmsTransfers(transfers);
+        return { fetched: transfers.length, upserted };
       },
     });
   }
@@ -247,7 +310,9 @@ export class SyncScheduler {
     const adapter = this.adapters.get(name);
     if (!adapter) return;
 
-    // Notify renderer that sync has started for this adapter
+    // Log sync start and notify renderer
+    const logId = this.db.logSyncStart(name);
+
     this.emitSyncProgress({
       adapter: name,
       lastSync: null,
@@ -259,7 +324,7 @@ export class SyncScheduler {
       console.log(`[SyncScheduler] Starting sync for adapter: ${name}`);
       const result = await adapter.run(this.db);
 
-      this.db.logSync(name, 'completed', result.fetched, result.upserted);
+      this.db.logSyncComplete(logId, result.fetched, result.upserted);
 
       this.emitSyncProgress({
         adapter: name,
@@ -275,7 +340,7 @@ export class SyncScheduler {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[SyncScheduler] Error syncing ${name}:`, message);
 
-      this.db.logSync(name, 'error', 0, 0, message);
+      this.db.logSyncError(logId, message);
 
       this.emitSyncProgress({
         adapter: name,

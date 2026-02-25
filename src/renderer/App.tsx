@@ -11,8 +11,23 @@ import { useAppStore } from './stores/app-store';
 
 export function App() {
   const fetchSyncStatuses = useAppStore(s => s.fetchSyncStatuses);
+  const updateSyncStatus = useAppStore(s => s.updateSyncStatus);
+  const initSettings = useAppStore(s => s.initSettings);
 
-  // Centralized sync status polling — avoids duplicate intervals in Sidebar/TopBar
+  // Load settings on mount
+  useEffect(() => {
+    initSettings();
+  }, [initSettings]);
+
+  // Subscribe to real-time sync progress events from main process
+  useEffect(() => {
+    const unsubscribe = window.odinApi.onSyncProgress((status) => {
+      updateSyncStatus(status);
+    });
+    return unsubscribe;
+  }, [updateSyncStatus]);
+
+  // Centralized sync status polling — keeps status fresh between push events
   useEffect(() => {
     fetchSyncStatuses();
     const interval = setInterval(fetchSyncStatuses, 30_000);

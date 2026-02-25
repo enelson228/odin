@@ -44,7 +44,7 @@ export type TrackedIndicatorCode = (typeof INDICATOR_CODES)[number];
 // ── Adapter ──────────────────────────────────────────────────
 
 export class WorldBankAdapter extends BaseApiAdapter<WBRawRecord, WorldBankIndicator> {
-  name = 'world-bank';
+  name = 'worldbank';
   baseUrl = 'https://api.worldbank.org/v2';
   rateLimitMs = 500;
 

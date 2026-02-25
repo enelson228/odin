@@ -7,12 +7,14 @@ import { MilitaryLayer } from '../components/map/MilitaryLayer';
 import { CountryLayer } from '../components/map/CountryLayer';
 import { LayerControls } from '../components/map/LayerControls';
 import { ArmsFlowLayer } from '../components/map/ArmsFlowLayer';
-import type { ArmsTransfer, Country } from '../../shared/types';
+import { ConflictHeatmap } from '../components/map/ConflictHeatmap';
+import type { ArmsTransfer, ConflictEvent, Country } from '../../shared/types';
 
 export function MapView() {
   const { setCurrentView } = useAppStore();
   const { layers } = useMapStore();
   const [armsTransfers, setArmsTransfers] = useState<ArmsTransfer[]>([]);
+  const [conflicts, setConflicts] = useState<ConflictEvent[]>([]);
   const [countries, setCountries] = useState<Country[]>([]);
 
   useEffect(() => {
@@ -22,12 +24,14 @@ export function MapView() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [arms, countriesData] = await Promise.all([
+        const [arms, countriesData, conflictsData] = await Promise.all([
           window.odinApi.getArmsTransfers(),
           window.odinApi.getCountries(),
+          window.odinApi.getConflicts(),
         ]);
         setArmsTransfers(arms);
         setCountries(countriesData);
+        setConflicts(conflictsData);
       } catch (error) {
         console.error('Failed to fetch map data:', error);
       }
@@ -44,6 +48,9 @@ export function MapView() {
       <MapContainer>
         {isLayerVisible('countries') && <CountryLayer />}
         {isLayerVisible('conflicts-cluster') && <ConflictLayer />}
+        {isLayerVisible('conflicts-heat') && (
+          <ConflictHeatmap events={conflicts} />
+        )}
         {isLayerVisible('military') && <MilitaryLayer />}
         <ArmsFlowLayer
           transfers={armsTransfers}

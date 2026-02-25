@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../stores/app-store';
-import { AppSettingsPublic } from '../../shared/types';
+import type { AppSettingsPublic, SyncLogEntry } from '../../shared/types';
 import { Spinner } from '../components/common/Spinner';
-import { SYNC_INTERVAL_OPTIONS } from '../lib/constants';
+import { SYNC_INTERVAL_OPTIONS, TIMEZONE_OPTIONS } from '../lib/constants';
+
+const ALL_ADAPTERS = ['acled', 'ucdp', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth'];
 
 export function Settings() {
   const { setCurrentView } = useAppStore();
@@ -16,10 +18,13 @@ export function Settings() {
     syncIntervalMinutes: 360,
     mapDefaultCenter: [20, 0],
     mapDefaultZoom: 3,
+    displayTimezone: 'UTC',
   });
-  // Password is tracked separately — never persisted in renderer state
   const [newPassword, setNewPassword] = useState('');
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
+  const [syncLog, setSyncLog] = useState<SyncLogEntry[]>([]);
+  const [logLoading, setLogLoading] = useState(false);
+  const [clearingLog, setClearingLog] = useState(false);
 
   useEffect(() => {
     setCurrentView('Settings');
@@ -43,6 +48,22 @@ export function Settings() {
     fetchSettings();
   }, []);
 
+  const fetchSyncLog = useCallback(async () => {
+    setLogLoading(true);
+    try {
+      const log = await window.odinApi.getSyncLog(50);
+      setSyncLog(log);
+    } catch (err) {
+      console.error('Failed to fetch sync log:', err);
+    } finally {
+      setLogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSyncLog();
+  }, [fetchSyncLog]);
+
   const handleSave = async () => {
     setSaving(true);
     setSaveMsg('');
@@ -52,8 +73,8 @@ export function Settings() {
         syncIntervalMinutes: settings.syncIntervalMinutes,
         mapDefaultCenter: settings.mapDefaultCenter,
         mapDefaultZoom: settings.mapDefaultZoom,
+        displayTimezone: settings.displayTimezone,
       };
-      // Only include the password if the user actually typed one
       if (newPassword.length > 0) {
         payload.acledPassword = newPassword;
       }
@@ -73,10 +94,23 @@ export function Settings() {
     setSyncing((prev) => ({ ...prev, [adapter]: true }));
     try {
       await window.odinApi.startSync(adapter);
+      await fetchSyncLog();
     } catch (err) {
       console.error(`Failed to sync ${adapter}:`, err);
     } finally {
       setSyncing((prev) => ({ ...prev, [adapter]: false }));
+    }
+  };
+
+  const handleClearLog = async () => {
+    setClearingLog(true);
+    try {
+      await window.odinApi.clearSyncLog();
+      setSyncLog([]);
+    } catch (err) {
+      console.error('Failed to clear sync log:', err);
+    } finally {
+      setClearingLog(false);
     }
   };
 
@@ -108,6 +142,7 @@ export function Settings() {
 
   return (
     <div className="max-w-3xl space-y-6">
+      {/* ACLED Auth */}
       <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
         <h2 className="text-xl font-bold text-odin-cyan mb-2 font-mono">
           ACLED Authentication
@@ -161,6 +196,7 @@ export function Settings() {
         </div>
       </div>
 
+      {/* Sync Settings */}
       <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
         <h2 className="text-xl font-bold text-odin-cyan mb-6 font-mono">
           Sync Settings
@@ -191,6 +227,35 @@ export function Settings() {
         </div>
       </div>
 
+      {/* Display Settings */}
+      <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
+        <h2 className="text-xl font-bold text-odin-cyan mb-6 font-mono">
+          Display Settings
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-mono text-odin-text-secondary mb-2">
+              Timezone
+            </label>
+            <select
+              value={settings.displayTimezone ?? 'UTC'}
+              onChange={(e) =>
+                setSettings({ ...settings, displayTimezone: e.target.value })
+              }
+              className="w-full bg-odin-bg-tertiary border border-odin-border rounded px-3 py-2 text-sm font-mono text-odin-text-primary focus:outline-none focus:border-odin-cyan"
+            >
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Map Defaults */}
       <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
         <h2 className="text-xl font-bold text-odin-cyan mb-6 font-mono">
           Map Defaults
@@ -258,13 +323,14 @@ export function Settings() {
         </div>
       </div>
 
+      {/* Manual Sync */}
       <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
         <h2 className="text-xl font-bold text-odin-cyan mb-6 font-mono">
           Manual Sync
         </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {['acled', 'worldbank', 'overpass', 'cia-factbook'].map((adapter) => (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          {ALL_ADAPTERS.map((adapter) => (
             <button
               key={adapter}
               onClick={() => handleManualSync(adapter)}
@@ -277,6 +343,75 @@ export function Settings() {
         </div>
       </div>
 
+      {/* Sync Log */}
+      <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-odin-cyan font-mono">
+            Sync Log
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchSyncLog}
+              disabled={logLoading}
+              className="px-3 py-1 text-xs font-mono text-odin-text-secondary border border-odin-border rounded hover:border-odin-cyan transition-colors disabled:opacity-50"
+            >
+              {logLoading ? '⟳' : '↻ Refresh'}
+            </button>
+            <button
+              onClick={handleClearLog}
+              disabled={clearingLog || syncLog.length === 0}
+              className="px-3 py-1 text-xs font-mono text-odin-red border border-odin-red/40 rounded hover:bg-odin-red/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {clearingLog ? 'Clearing...' : 'Clear Log'}
+            </button>
+          </div>
+        </div>
+
+        {syncLog.length === 0 ? (
+          <p className="text-xs font-mono text-odin-text-tertiary">No sync history available.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="text-odin-text-tertiary border-b border-odin-border">
+                  <th className="text-left pb-2 pr-4">Adapter</th>
+                  <th className="text-left pb-2 pr-4">Status</th>
+                  <th className="text-left pb-2 pr-4">Started</th>
+                  <th className="text-left pb-2 pr-4">Fetched</th>
+                  <th className="text-left pb-2">Upserted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {syncLog.map((entry) => (
+                  <tr key={entry.id} className="border-b border-odin-border/40 hover:bg-odin-bg-tertiary/30">
+                    <td className="py-2 pr-4 text-odin-text-primary">{entry.adapter}</td>
+                    <td className="py-2 pr-4">
+                      <span className={
+                        entry.status === 'completed' ? 'text-odin-green' :
+                        entry.status === 'error' ? 'text-odin-red' :
+                        'text-odin-amber'
+                      }>
+                        {entry.status}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4 text-odin-text-tertiary">
+                      {new Date(entry.started_at).toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-4 text-odin-text-secondary">
+                      {entry.records_fetched.toLocaleString()}
+                    </td>
+                    <td className="py-2 text-odin-text-secondary">
+                      {entry.records_upserted.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Save Button */}
       <div className="flex items-center justify-end gap-4">
         {saveMsg && (
           <span className={`text-sm font-mono ${saveMsg.startsWith('Failed') ? 'text-odin-red' : 'text-odin-green'}`}>
