@@ -9,3 +9,4 @@ export { AcledAdapter } from './acled';
 export { OverpassAdapter } from './overpass';
 export { SipriAdapter } from './sipri';
 export { NaturalEarthAdapter } from './natural-earth';
+export { UCDPAdapter } from './ucdp';

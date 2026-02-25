@@ -122,7 +122,7 @@ const ISO3_SLUG_MAP: SlugEntry[] = [
 export class CiaFactbookAdapter extends BaseApiAdapter<FactbookRaw, Partial<Country>> {
   name = 'cia-factbook';
   baseUrl = 'https://raw.githubusercontent.com/factbook/factbook.json/master';
-  rateLimitMs = 500;
+  rateLimitMs = 300;
 
   /**
    * fetchPage is implemented for interface compliance but is not the

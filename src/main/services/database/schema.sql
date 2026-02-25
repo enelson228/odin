@@ -36,8 +36,9 @@ CREATE TABLE IF NOT EXISTS conflict_events (
   fatalities INTEGER DEFAULT 0,
   notes TEXT,
   source TEXT,
-  source_scale TEXT,
-  FOREIGN KEY (iso3) REFERENCES countries(iso3)
+  source_scale TEXT
+  -- No FK on iso3: disputed territories (Kosovo XKX, Taiwan TWN, Palestinian State PSE)
+  -- appear in ACLED data but may not be in the countries table.
 );
 CREATE INDEX IF NOT EXISTS idx_conflicts_iso3 ON conflict_events(iso3);
 CREATE INDEX IF NOT EXISTS idx_conflicts_date ON conflict_events(event_date);

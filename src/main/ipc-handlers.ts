@@ -38,12 +38,13 @@ function validateExportPath(filePath: unknown): string {
 }
 
 const KNOWN_ADAPTERS = new Set([
-  'acled', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth',
+  'acled', 'ucdp', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth',
 ]);
 
 // Token fields are managed internally by the sync scheduler — not writable from renderer.
 const WRITABLE_SETTINGS_KEYS = new Set<keyof AppSettings>([
   'acledEmail', 'acledPassword', 'syncIntervalMinutes', 'mapDefaultCenter', 'mapDefaultZoom',
+  'displayTimezone',
 ]);
 
 // ─── IPC Registration ─────────────────────────────────────
@@ -89,18 +90,34 @@ export function registerIpcHandlers(
   // ─── Sync ─────────────────────────────────────────────
 
   ipcMain.handle('sync:start', async (_event, adapter?: unknown) => {
-    if (adapter !== undefined) {
-      if (typeof adapter !== 'string' || !KNOWN_ADAPTERS.has(adapter)) {
-        throw new Error(`Unknown adapter: ${String(adapter)}`);
+    try {
+      if (adapter !== undefined) {
+        if (typeof adapter !== 'string' || !KNOWN_ADAPTERS.has(adapter)) {
+          throw new Error(`Unknown adapter: ${String(adapter)}`);
+        }
+        await syncScheduler.syncAdapter(adapter);
+      } else {
+        await syncScheduler.syncAll();
       }
-      await syncScheduler.syncAdapter(adapter);
-    } else {
-      await syncScheduler.syncAll();
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[IPC] sync:start error:', message);
+      return { success: false };
     }
   });
 
   ipcMain.handle('sync:status', () => {
     return db.getSyncStatus();
+  });
+
+  ipcMain.handle('sync:get-log', (_event, limit?: unknown) => {
+    const n = typeof limit === 'number' ? limit : 100;
+    return db.getSyncLog(n);
+  });
+
+  ipcMain.handle('sync:clear-log', () => {
+    db.clearSyncLog();
   });
 
   // ─── Export ───────────────────────────────────────────
@@ -148,6 +165,7 @@ export function registerIpcHandlers(
       syncIntervalMinutes: s.syncIntervalMinutes,
       mapDefaultCenter: s.mapDefaultCenter,
       mapDefaultZoom: s.mapDefaultZoom,
+      displayTimezone: s.displayTimezone,
     };
     return pub;
   });

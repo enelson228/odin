@@ -7,6 +7,7 @@ import {
   ConflictFilters,
   ArmsFilters,
   SyncStatus,
+  SyncLogEntry,
   ExportRequest,
   AppSettingsPublic,
 } from '../../shared/types';
@@ -18,8 +19,10 @@ interface OdinApi {
   getArmsTransfers(filters?: ArmsFilters): Promise<ArmsTransfer[]>;
   getInstallations(iso3?: string): Promise<MilitaryInstallation[]>;
   getIndicators(iso3: string): Promise<WorldBankIndicator[]>;
-  startSync(adapter?: string): Promise<void>;
+  startSync(adapter?: string): Promise<{ success: boolean }>;
   getSyncStatus(): Promise<SyncStatus[]>;
+  getSyncLog(limit?: number): Promise<SyncLogEntry[]>;
+  clearSyncLog(): Promise<void>;
   runExport(request: ExportRequest): Promise<{ success: boolean; filePath?: string; error?: string }>;
   chooseSavePath(defaultName: string): Promise<string | null>;
   getSettings(): Promise<AppSettingsPublic>;

@@ -86,6 +86,17 @@ export interface SyncStatus {
   errorMessage?: string;
 }
 
+export interface SyncLogEntry {
+  id: number;
+  adapter: string;
+  started_at: string;
+  completed_at: string | null;
+  status: 'running' | 'completed' | 'error';
+  records_fetched: number;
+  records_upserted: number;
+  error_message: string | null;
+}
+
 // ─── Map Types ────────────────────────────────────────────
 
 export interface MapLayer {
@@ -137,13 +148,15 @@ export interface ArmsFilters {
 
 export interface AppSettings {
   acledEmail: string;
-  acledPassword: string;        // ACLED account password (used for Drupal session login)
-  acledSessionCookie: string;   // Drupal session cookie (managed automatically)
-  acledCsrfToken: string;       // CSRF token from login response (managed automatically)
-  acledTokenExpiry: number;     // Session expiry as Unix timestamp ms
+  acledPassword: string;              // ACLED account password (used for OAuth2 grant)
+  acledAccessToken: string;           // OAuth2 access token (24h TTL, managed automatically)
+  acledRefreshToken: string;          // OAuth2 refresh token (14d TTL, managed automatically)
+  acledTokenExpiry: number;           // Access token expiry as Unix timestamp ms
+  acledRefreshTokenExpiry: number;    // Refresh token expiry as Unix timestamp ms
   syncIntervalMinutes: number;
   mapDefaultCenter: [number, number];
   mapDefaultZoom: number;
+  displayTimezone: string;
 }
 
 /**
@@ -156,4 +169,5 @@ export interface AppSettingsPublic {
   syncIntervalMinutes: number;
   mapDefaultCenter: [number, number];
   mapDefaultZoom: number;
+  displayTimezone: string;
 }
