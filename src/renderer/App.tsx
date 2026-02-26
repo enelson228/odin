@@ -11,6 +11,13 @@ import { useAppStore } from './stores/app-store';
 
 export function App() {
   const fetchSyncStatuses = useAppStore(s => s.fetchSyncStatuses);
+  const updateSyncStatus = useAppStore(s => s.updateSyncStatus);
+  const initSettings = useAppStore(s => s.initSettings);
+
+  // Load persisted settings (timezone, etc.) before rendering any dates
+  useEffect(() => {
+    initSettings();
+  }, [initSettings]);
 
   // Centralized sync status polling — avoids duplicate intervals in Sidebar/TopBar
   useEffect(() => {
@@ -18,6 +25,18 @@ export function App() {
     const interval = setInterval(fetchSyncStatuses, 30_000);
     return () => clearInterval(interval);
   }, [fetchSyncStatuses]);
+
+  // Subscribe to real-time sync progress events from the main process
+  useEffect(() => {
+    const unsubscribe = window.odinApi.onSyncProgress((status) => {
+      updateSyncStatus(status);
+      // Refresh full status list after a sync completes or errors
+      if (status.status !== 'syncing') {
+        fetchSyncStatuses();
+      }
+    });
+    return unsubscribe;
+  }, [updateSyncStatus, fetchSyncStatuses]);
 
   return (
     <Shell>

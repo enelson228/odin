@@ -8,6 +8,7 @@ import type {
   ConflictFilters,
   ArmsFilters,
   SyncStatus,
+  SyncLogEntry,
   AppSettings,
   ExportRequest,
 } from '@shared/types';
@@ -28,6 +29,8 @@ export interface OdinApi {
   // ─── Sync ─────────────────────────────────────────────
   startSync(adapter?: string): Promise<void>;
   getSyncStatus(): Promise<SyncStatus[]>;
+  getSyncLog(): Promise<SyncLogEntry[]>;
+  clearSyncLog(): Promise<void>;
 
   // ─── Export ───────────────────────────────────────────
   runExport(request: ExportRequest): Promise<{ success: boolean; filePath?: string; error?: string }>;
@@ -64,6 +67,10 @@ const odinApi: OdinApi = {
   startSync: (adapter?: string) => ipcRenderer.invoke('sync:start', adapter),
 
   getSyncStatus: () => ipcRenderer.invoke('sync:status'),
+
+  getSyncLog: () => ipcRenderer.invoke('sync:get-log'),
+
+  clearSyncLog: () => ipcRenderer.invoke('sync:clear-log'),
 
   // ─── Export ───────────────────────────────────────────
 

@@ -1,3 +1,11 @@
+// Module-level display timezone — empty string means system local time.
+// Set via setDisplayTimezone() on app startup and whenever the user saves settings.
+let _displayTimezone: string = '';
+
+export function setDisplayTimezone(tz: string): void {
+  _displayTimezone = tz;
+}
+
 export function formatNumber(n: number | null | undefined): string {
   if (n == null) return '—';
   if (n >= 1e9) return `${(n / 1e9).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}B`;
@@ -19,7 +27,9 @@ export function formatDate(iso: string | null | undefined): string {
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
-      day: 'numeric'
+      day: 'numeric',
+      // undefined falls back to system local — matches pre-timezone behaviour
+      timeZone: _displayTimezone || undefined,
     });
   } catch {
     return '—';
@@ -41,6 +51,8 @@ export function formatDateTime(iso: string | null | undefined): string {
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      // undefined falls back to system local — matches pre-timezone behaviour
+      timeZone: _displayTimezone || undefined,
     });
   } catch {
     return '—';
@@ -66,5 +78,10 @@ export function formatRelativeDate(dateStr: string | null | undefined): string {
   if (diffDays === 1) return 'Yesterday';
   if (diffDays < 30) return `${diffDays} days ago`;
 
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: _displayTimezone || undefined,
+  });
 }

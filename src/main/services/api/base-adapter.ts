@@ -70,8 +70,37 @@ export abstract class BaseApiAdapter<TRaw, TNormalized> {
   }
 
   /**
+   * Retry a function with exponential backoff on failure.
+   * Attempts: immediate, 2s, 4s, 8s (default 3 retries).
+   */
+  protected async withRetry<T>(
+    fn: () => Promise<T>,
+    maxRetries = 3,
+    baseDelayMs = 2000,
+  ): Promise<T> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxRetries) {
+          const delay = baseDelayMs * Math.pow(2, attempt);
+          console.warn(
+            `[${this.name}] Retry ${attempt + 1}/${maxRetries} in ${delay}ms:`,
+            err instanceof Error ? err.message : err,
+          );
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
    * Exhaustively paginate through all pages and return the full
-   * normalized result set.
+   * normalized result set. Each page fetch is retried with backoff
+   * on transient failures.
    */
   async fetchAll(initialParams: Record<string, string> = {}): Promise<TNormalized[]> {
     const results: TNormalized[] = [];
@@ -79,7 +108,7 @@ export abstract class BaseApiAdapter<TRaw, TNormalized> {
     let hasMore = true;
 
     while (hasMore) {
-      const page = await this.fetchPage(params);
+      const page = await this.withRetry(() => this.fetchPage(params));
       results.push(...page.data.map(raw => this.normalize(raw)));
       hasMore = page.hasMore;
       if (page.nextParams) {

@@ -19,14 +19,40 @@ export const MIGRATIONS: Migration[] = [
       // No-op: initial schema is applied separately via schema.sql
     },
   },
-  // Future migrations go here:
-  // {
-  //   version: 2,
-  //   description: 'Add index on conflict_events.fatalities',
-  //   up: (db) => {
-  //     db.exec('CREATE INDEX IF NOT EXISTS idx_conflicts_fatalities ON conflict_events(fatalities)');
-  //   },
-  // },
+  {
+    version: 2,
+    description: 'Remove FK constraint on conflict_events.iso3 to allow disputed territories',
+    up: (db) => {
+      // SQLite cannot DROP CONSTRAINT, so we recreate the table without it.
+      // This allows ACLED events for Kosovo, Taiwan, Palestinian State, etc.
+      // to be stored even if those territories are not in the countries table.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS conflict_events_new (
+          id TEXT PRIMARY KEY,
+          iso3 TEXT NOT NULL,
+          event_date TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          sub_event_type TEXT,
+          actor1 TEXT,
+          actor2 TEXT,
+          location TEXT,
+          latitude REAL NOT NULL,
+          longitude REAL NOT NULL,
+          fatalities INTEGER DEFAULT 0,
+          notes TEXT,
+          source TEXT,
+          source_scale TEXT
+        );
+        INSERT OR IGNORE INTO conflict_events_new SELECT * FROM conflict_events;
+        DROP TABLE conflict_events;
+        ALTER TABLE conflict_events_new RENAME TO conflict_events;
+        CREATE INDEX IF NOT EXISTS idx_conflicts_iso3 ON conflict_events(iso3);
+        CREATE INDEX IF NOT EXISTS idx_conflicts_date ON conflict_events(event_date);
+        CREATE INDEX IF NOT EXISTS idx_conflicts_type ON conflict_events(event_type);
+        CREATE INDEX IF NOT EXISTS idx_conflicts_geo ON conflict_events(latitude, longitude);
+      `);
+    },
+  },
 ];
 
 /**

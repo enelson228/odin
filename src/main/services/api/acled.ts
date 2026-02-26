@@ -1,7 +1,6 @@
 // ─── ACLED Conflict Events Adapter ────────────────────────────
 // Fetches armed conflict event data from the ACLED REST API.
-// Auth: Drupal session login → Cookie + X-CSRF-Token headers.
-// (OAuth2 Bearer tokens are rejected by the data endpoint.)
+// Auth: OAuth 2.0 resource-owner password grant → Bearer token.
 // Docs: https://acleddata.com/api-documentation/getting-started
 
 import { ConflictEvent } from '@shared/types';
@@ -39,19 +38,29 @@ interface ACLEDApiResponse {
   count: number;
 }
 
-// ── Session type ──────────────────────────────────────────────
+interface ACLEDTokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;   // seconds
+  token_type: string;
+}
 
-export interface AcledSession {
-  sessionCookie: string; // Drupal session cookie (sent as Cookie header)
-  csrfToken: string;     // CSRF token (sent as X-CSRF-Token header)
-  expiresAt: number;     // Unix timestamp ms
+// ── Token type ────────────────────────────────────────────────
+
+export interface AcledToken {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;              // Unix timestamp ms (access token)
+  refreshTokenExpiresAt: number;  // Unix timestamp ms (refresh token, 14 days)
 }
 
 // ── Constants ─────────────────────────────────────────────────
 
-const ACLED_API_BASE   = 'https://acleddata.com/api/acled/read';
-const ACLED_LOGIN_URL  = 'https://acleddata.com/user/login?_format=json';
-const SESSION_TTL_MS   = 20 * 60 * 60 * 1000; // 20 h (Drupal default session ~24 h)
+const ACLED_API_BASE     = 'https://acleddata.com/api/acled/read';
+const ACLED_TOKEN_URL    = 'https://acleddata.com/oauth/token';
+const ACLED_CLIENT_ID    = 'acled';
+const REFRESH_BUFFER_MS  = 60_000;                    // Refresh 1 min before expiry
+const REFRESH_TOKEN_TTL  = 14 * 24 * 60 * 60 * 1000; // 14 days in ms
 
 // ── Adapter ──────────────────────────────────────────────────
 
@@ -62,107 +71,134 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
 
   private email: string;
   private password: string;
-  private session: AcledSession | null;
+  private token: AcledToken | null;
 
   private static readonly PAGE_LIMIT = 5000;
 
   /**
    * @param email    ACLED account email
    * @param password ACLED account password
-   * @param session  Existing session from a previous run (optional)
+   * @param token    Existing OAuth token from a previous run (optional)
    */
-  constructor(email: string, password: string, session?: AcledSession) {
+  constructor(email: string, password: string, token?: AcledToken) {
     super();
     this.email = email;
     this.password = password;
-    this.session = session ?? null;
+    this.token = token ?? null;
   }
 
-  /** Returns current session so the caller can persist it. */
-  getSession(): AcledSession | null {
-    return this.session;
+  /** Returns current token so the caller can persist it. */
+  getToken(): AcledToken | null {
+    return this.token;
   }
 
-  // ── Drupal Session Auth ─────────────────────────────────────
+  // ── OAuth 2.0 Auth ─────────────────────────────────────────
 
-  private async login(): Promise<AcledSession> {
-    const res = await fetch(ACLED_LOGIN_URL, {
+  private async authenticate(): Promise<AcledToken> {
+    const body = new URLSearchParams({
+      grant_type: 'password',
+      username: this.email,
+      password: this.password,
+      client_id: ACLED_CLIENT_ID,
+    });
+
+    const res = await fetch(ACLED_TOKEN_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: this.email, pass: this.password }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
     });
 
     if (!res.ok) {
       throw new Error(
-        `ACLED login failed: HTTP ${res.status}. ` +
+        `ACLED authentication failed: HTTP ${res.status}. ` +
         'Check your email and password in Settings (register at acleddata.com).',
       );
     }
 
-    const json = await res.json() as { csrf_token: string };
-    const csrfToken = json.csrf_token;
+    const json = await res.json() as ACLEDTokenResponse;
 
-    if (!csrfToken) {
-      throw new Error('ACLED login response missing csrf_token field');
+    if (!json.access_token) {
+      throw new Error('ACLED token response missing access_token');
     }
 
-    const sessionCookie = this.extractSessionCookie(res);
-    console.log('[AcledAdapter] Login successful, session established');
-
-    return {
-      sessionCookie,
-      csrfToken,
-      expiresAt: Date.now() + SESSION_TTL_MS,
+    const now = Date.now();
+    const token: AcledToken = {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token,
+      expiresAt: now + (json.expires_in * 1000),
+      refreshTokenExpiresAt: now + REFRESH_TOKEN_TTL,
     };
+
+    console.log('[AcledAdapter] OAuth2 authentication successful');
+    this.token = token;
+    return token;
   }
 
-  /**
-   * Extracts the Drupal session cookie (SESS... or SSESS...) from a Response.
-   *
-   * Node.js 18.14+ / undici exposes `headers.getSetCookie()` which returns an
-   * array. Older environments return a single comma-joined string from
-   * `headers.get('set-cookie')`.
-   */
-  private extractSessionCookie(res: Response): string {
-    let cookies: string[];
+  private async refreshAccessToken(refreshToken: string): Promise<AcledToken> {
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: ACLED_CLIENT_ID,
+    });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const h = res.headers as any;
-    if (typeof h.getSetCookie === 'function') {
-      cookies = h.getSetCookie() as string[];
-    } else {
-      const raw = res.headers.get('set-cookie') ?? '';
-      // Split on commas that precede a new cookie token (e.g. "Path=/,SESSID=...")
-      cookies = raw.split(/,(?=\s*[A-Za-z])/);
-    }
+    const res = await fetch(ACLED_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
 
-    const sessionCookie = cookies
-      .map(c => c.split(';')[0].trim())
-      .find(c => /^S?SESS[A-Za-z0-9]+=/.test(c));
-
-    if (!sessionCookie) {
+    if (!res.ok) {
       throw new Error(
-        'ACLED login response did not include a session cookie. ' +
-        'The server may have returned an unexpected response.',
+        `ACLED token refresh failed: HTTP ${res.status}. ` +
+        'Please re-enter your credentials in Settings.',
       );
     }
 
-    return sessionCookie;
+    const json = await res.json() as ACLEDTokenResponse;
+
+    if (!json.access_token) {
+      throw new Error('ACLED refresh response missing access_token');
+    }
+
+    const now = Date.now();
+    const token: AcledToken = {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token || refreshToken,
+      expiresAt: now + (json.expires_in * 1000),
+      // Reset refresh TTL only if a new refresh token was issued
+      refreshTokenExpiresAt: json.refresh_token
+        ? now + REFRESH_TOKEN_TTL
+        : (this.token?.refreshTokenExpiresAt ?? now + REFRESH_TOKEN_TTL),
+    };
+
+    console.log('[AcledAdapter] Access token refreshed successfully');
+    this.token = token;
+    return token;
   }
 
-  private async ensureValidSession(): Promise<AcledSession> {
-    if (this.session && Date.now() < this.session.expiresAt) {
-      return this.session;
+  private async ensureValidToken(): Promise<AcledToken> {
+    const now = Date.now();
+
+    if (this.token) {
+      // Access token still valid
+      if (now < this.token.expiresAt - REFRESH_BUFFER_MS) {
+        return this.token;
+      }
+
+      // Access token expiring soon — use refresh token if still valid
+      if (this.token.refreshToken && now < this.token.refreshTokenExpiresAt - REFRESH_BUFFER_MS) {
+        return await this.refreshAccessToken(this.token.refreshToken);
+      }
     }
-    // Session expired or not yet obtained — log in fresh
-    this.session = await this.login();
-    return this.session;
+
+    // No token or both tokens expired — re-authenticate with credentials
+    return await this.authenticate();
   }
 
   // ── Data Fetching ──────────────────────────────────────────
 
   /**
-   * Fetch one page of conflict events using Drupal session auth.
+   * Fetch one page of conflict events using OAuth2 Bearer auth.
    */
   async fetchPage(
     params: Record<string, string>,
@@ -174,10 +210,11 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
       );
     }
 
-    const session = await this.ensureValidSession();
+    const token = await this.ensureValidToken();
     const page = parseInt(params.page ?? '1', 10);
 
     const url = new URL(this.baseUrl);
+    url.searchParams.set('_format', 'json');
     url.searchParams.set('limit', String(AcledAdapter.PAGE_LIMIT));
     url.searchParams.set('page', String(page));
 
@@ -192,10 +229,9 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
     try {
       const res = await this.rateLimitedFetch(url.toString(), {
         headers: {
-          Cookie: session.sessionCookie,
-          'X-CSRF-Token': session.csrfToken,
+          Authorization: `Bearer ${token.accessToken}`,
         },
-      });
+      }, 60_000); // 60-second timeout — ACLED can be slow
       const json: ACLEDApiResponse = await res.json();
 
       if (!json.success) {
@@ -241,12 +277,19 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
   }
 
   async fetchAllEvents(sinceDate?: string): Promise<ConflictEvent[]> {
-    const params: Record<string, string> = { page: '1' };
-    if (sinceDate) params.event_date = sinceDate;
+    // If this is the first ever sync (no sinceDate), cap to the last 2 years.
+    // Fetching all ACLED data since 1997 (500k+ events) would time out and exhaust
+    // memory. Subsequent syncs are incremental from the last completed sync date.
+    let effectiveSince = sinceDate;
+    if (!effectiveSince) {
+      const twoYearsAgo = new Date();
+      twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+      effectiveSince = twoYearsAgo.toISOString().split('T')[0];
+    }
 
-    console.log(
-      `[AcledAdapter] Starting event sync${sinceDate ? ` since ${sinceDate}` : ' (full)'}...`,
-    );
+    const params: Record<string, string> = { page: '1', event_date: effectiveSince };
+
+    console.log(`[AcledAdapter] Starting event sync since ${effectiveSince}...`);
     const results = await this.fetchAll(params);
     console.log(`[AcledAdapter] Fetched ${results.length} conflict events`);
     return results;

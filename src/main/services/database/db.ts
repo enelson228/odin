@@ -8,6 +8,7 @@ import type {
   ConflictFilters,
   ArmsFilters,
   SyncStatus,
+  SyncLogEntry,
   AppSettings,
 } from '@shared/types';
 import schemaSql from './schema.sql?raw';
@@ -15,12 +16,14 @@ import schemaSql from './schema.sql?raw';
 const DEFAULT_SETTINGS: AppSettings = {
   acledEmail: '',
   acledPassword: '',
-  acledSessionCookie: '',
-  acledCsrfToken: '',
+  acledAccessToken: '',
+  acledRefreshToken: '',
   acledTokenExpiry: 0,
+  acledRefreshTokenExpiry: 0,
   syncIntervalMinutes: 360,
   mapDefaultCenter: [20, 0],
   mapDefaultZoom: 3,
+  displayTimezone: '',
 };
 
 const CURRENT_SCHEMA_VERSION = 1;
@@ -189,8 +192,23 @@ export class DatabaseService {
 
   // ─── Sync Status ────────────────────────────────────────
 
+  /**
+   * Returns the completed_at timestamp of the most recent successful sync
+   * for the given adapter, or null if no successful sync exists.
+   */
+  getLastSuccessfulSync(adapter: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT completed_at FROM sync_log
+         WHERE adapter = ? AND status = 'completed'
+         ORDER BY completed_at DESC LIMIT 1`,
+      )
+      .get(adapter) as { completed_at: string } | undefined;
+    return row?.completed_at ?? null;
+  }
+
   getSyncStatus(): SyncStatus[] {
-    const adapters = ['acled', 'worldbank', 'overpass', 'cia-factbook'];
+    const adapters = ['acled', 'worldbank', 'overpass', 'cia-factbook', 'ucdp'];
     const result: SyncStatus[] = [];
 
     for (const adapter of adapters) {
@@ -320,29 +338,42 @@ export class DatabaseService {
     `);
 
     let count = 0;
+    let skipped = 0;
     const upsert = this.db.transaction(() => {
       for (const event of events) {
-        stmt.run({
-          id: event.id,
-          iso3: event.iso3,
-          event_date: event.event_date,
-          event_type: event.event_type,
-          sub_event_type: event.sub_event_type,
-          actor1: event.actor1,
-          actor2: event.actor2,
-          location: event.location,
-          latitude: event.latitude,
-          longitude: event.longitude,
-          fatalities: event.fatalities,
-          notes: event.notes,
-          source: event.source,
-          source_scale: event.source_scale,
-        });
-        count++;
+        // Skip events without iso3 — they violate the NOT NULL constraint
+        if (!event.iso3 || event.iso3.trim() === '') {
+          skipped++;
+          continue;
+        }
+        try {
+          stmt.run({
+            id: event.id,
+            iso3: event.iso3,
+            event_date: event.event_date,
+            event_type: event.event_type,
+            sub_event_type: event.sub_event_type,
+            actor1: event.actor1,
+            actor2: event.actor2,
+            location: event.location,
+            latitude: event.latitude,
+            longitude: event.longitude,
+            fatalities: event.fatalities,
+            notes: event.notes,
+            source: event.source,
+            source_scale: event.source_scale,
+          });
+          count++;
+        } catch {
+          skipped++;
+        }
       }
     });
 
     upsert();
+    if (skipped > 0) {
+      console.warn(`[db.upsertConflicts] Skipped ${skipped} events (null iso3 or constraint violation)`);
+    }
     return count;
   }
 
@@ -445,6 +476,23 @@ export class DatabaseService {
 
   // ─── Sync Logging ───────────────────────────────────────
 
+  /**
+   * Log the start of a sync for an adapter.
+   * This creates an entry with status='running' so the UI can show progress immediately.
+   */
+  logSyncStart(adapter: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO sync_log (adapter, status, records_fetched, records_upserted, error_message)
+         VALUES (?, 'running', 0, 0, NULL)`,
+      )
+      .run(adapter);
+  }
+
+  /**
+   * Log the completion or failure of a sync for an adapter.
+   * This creates a final entry with the results and status.
+   */
   logSync(
     adapter: string,
     status: string,
@@ -458,6 +506,16 @@ export class DatabaseService {
          VALUES (?, ?, ?, ?, ?, datetime('now'))`,
       )
       .run(adapter, status, fetched, upserted, error ?? null);
+  }
+
+  getSyncLog(limit = 100): SyncLogEntry[] {
+    return this.db
+      .prepare('SELECT * FROM sync_log ORDER BY started_at DESC LIMIT ?')
+      .all(limit) as SyncLogEntry[];
+  }
+
+  clearSyncLog(): void {
+    this.db.prepare('DELETE FROM sync_log').run();
   }
 
   // ─── Helpers ────────────────────────────────────────────

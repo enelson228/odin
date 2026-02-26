@@ -38,12 +38,13 @@ function validateExportPath(filePath: unknown): string {
 }
 
 const KNOWN_ADAPTERS = new Set([
-  'acled', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth',
+  'acled', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth', 'ucdp',
 ]);
 
 // Token fields are managed internally by the sync scheduler — not writable from renderer.
 const WRITABLE_SETTINGS_KEYS = new Set<keyof AppSettings>([
   'acledEmail', 'acledPassword', 'syncIntervalMinutes', 'mapDefaultCenter', 'mapDefaultZoom',
+  'displayTimezone',
 ]);
 
 // ─── IPC Registration ─────────────────────────────────────
@@ -89,6 +90,8 @@ export function registerIpcHandlers(
   // ─── Sync ─────────────────────────────────────────────
 
   ipcMain.handle('sync:start', async (_event, adapter?: unknown) => {
+    // Await the sync to completion so the renderer knows when it's done.
+    // Live status updates are communicated via sync:progress push events.
     if (adapter !== undefined) {
       if (typeof adapter !== 'string' || !KNOWN_ADAPTERS.has(adapter)) {
         throw new Error(`Unknown adapter: ${String(adapter)}`);
@@ -97,10 +100,19 @@ export function registerIpcHandlers(
     } else {
       await syncScheduler.syncAll();
     }
+    return { success: true };
   });
 
   ipcMain.handle('sync:status', () => {
     return db.getSyncStatus();
+  });
+
+  ipcMain.handle('sync:get-log', () => {
+    return db.getSyncLog(100);
+  });
+
+  ipcMain.handle('sync:clear-log', () => {
+    db.clearSyncLog();
   });
 
   // ─── Export ───────────────────────────────────────────
@@ -148,6 +160,7 @@ export function registerIpcHandlers(
       syncIntervalMinutes: s.syncIntervalMinutes,
       mapDefaultCenter: s.mapDefaultCenter,
       mapDefaultZoom: s.mapDefaultZoom,
+      displayTimezone: s.displayTimezone,
     };
     return pub;
   });

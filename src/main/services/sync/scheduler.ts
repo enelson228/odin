@@ -1,10 +1,11 @@
 import { BrowserWindow } from 'electron';
 import type { DatabaseService } from '@main/services/database/db';
 import type { SyncStatus } from '@shared/types';
-import { AcledAdapter, AcledSession } from '@main/services/api/acled';
+import { AcledAdapter, AcledToken } from '@main/services/api/acled';
 import { WorldBankAdapter } from '@main/services/api/world-bank';
 import { OverpassAdapter } from '@main/services/api/overpass';
 import { CiaFactbookAdapter } from '@main/services/api/cia-factbook';
+import { UcdpAdapter } from '@main/services/api/ucdp';
 
 /**
  * A sync adapter bridges an API adapter to the database.
@@ -36,7 +37,7 @@ export class SyncScheduler {
   initAdapters(): void {
     const settings = this.db.getSettings();
 
-    // ACLED conflict events adapter (OAuth2 password grant → Bearer token)
+    // ACLED conflict events adapter (OAuth2 resource-owner password grant → Bearer token)
     this.adapters.set('acled', {
       name: 'acled',
       async run(db: DatabaseService) {
@@ -50,27 +51,34 @@ export class SyncScheduler {
           );
         }
 
-        // Pass any previously stored session to avoid re-logging in every sync
-        const existingSession: AcledSession | undefined =
-          s.acledSessionCookie
+        // Pass any previously stored OAuth2 token to avoid re-authenticating every sync
+        const existingToken: AcledToken | undefined =
+          s.acledAccessToken
             ? {
-                sessionCookie: s.acledSessionCookie,
-                csrfToken: s.acledCsrfToken,
+                accessToken: s.acledAccessToken,
+                refreshToken: s.acledRefreshToken,
                 expiresAt: s.acledTokenExpiry,
+                refreshTokenExpiresAt: s.acledRefreshTokenExpiry,
               }
             : undefined;
 
-        const adapter = new AcledAdapter(acledEmail, acledPassword, existingSession);
-        const events = await adapter.fetchAllEvents();
+        // Incremental sync: only fetch events since the last successful ACLED sync.
+        // First run (no prior completed sync) fetches the full historical dataset.
+        const lastSync = db.getLastSuccessfulSync('acled');
+        const sinceDate = lastSync ? lastSync.split('T')[0] : undefined;
+
+        const adapter = new AcledAdapter(acledEmail, acledPassword, existingToken);
+        const events = await adapter.fetchAllEvents(sinceDate);
         const upserted = db.upsertConflicts(events);
 
-        // Persist any new session so the next sync can reuse it
-        const newSession = adapter.getSession();
-        if (newSession) {
+        // Persist any updated OAuth2 token so the next sync can reuse it
+        const newToken = adapter.getToken();
+        if (newToken) {
           db.updateSettings({
-            acledSessionCookie: newSession.sessionCookie,
-            acledCsrfToken: newSession.csrfToken,
-            acledTokenExpiry: newSession.expiresAt,
+            acledAccessToken: newToken.accessToken,
+            acledRefreshToken: newToken.refreshToken,
+            acledTokenExpiry: newToken.expiresAt,
+            acledRefreshTokenExpiry: newToken.refreshTokenExpiresAt,
           });
         }
 
@@ -150,6 +158,24 @@ export class SyncScheduler {
         }
 
         return { fetched: profiles.length, upserted };
+      },
+    });
+
+    // UCDP Georeferenced Events Dataset adapter (no credentials required)
+    this.adapters.set('ucdp', {
+      name: 'ucdp',
+      async run(db: DatabaseService) {
+        // Build a country name → iso3 map so the adapter can resolve iso3 codes
+        const countries = db.getCountries();
+        const countryMap = new Map<string, string>(
+          countries.map(c => [c.name.toLowerCase(), c.iso3]),
+        );
+
+        const adapter = new UcdpAdapter();
+        adapter.setCountryMap(countryMap);
+        const events = await adapter.fetchAllEvents();
+        const upserted = db.upsertConflicts(events);
+        return { fetched: events.length, upserted };
       },
     });
   }
@@ -246,6 +272,9 @@ export class SyncScheduler {
   private async syncAdapterInternal(name: string): Promise<void> {
     const adapter = this.adapters.get(name);
     if (!adapter) return;
+
+    // Log sync start — this creates a "running" entry so the UI shows progress immediately
+    this.db.logSyncStart(name);
 
     // Notify renderer that sync has started for this adapter
     this.emitSyncProgress({

@@ -19,6 +19,9 @@ export function TopBar() {
     .sort()
     .reverse()[0];
 
+  // Adapter currently syncing (updated in real-time via sync:progress events in App.tsx)
+  const activeAdapter = syncStatuses.find((s) => s.status === 'syncing');
+
   const handleSync = async () => {
     setSyncing(true);
     try {
@@ -30,6 +33,8 @@ export function TopBar() {
       setSyncing(false);
     }
   };
+
+  const isBusy = syncing || Boolean(activeAdapter);
 
   return (
     <header className="bg-odin-bg-secondary border-b border-odin-border px-6 py-4">
@@ -49,15 +54,23 @@ export function TopBar() {
                 <span>Last sync: {formatDateTime(lastSync)}</span>
               </>
             )}
+            {activeAdapter && (
+              <>
+                <span>•</span>
+                <span className="text-odin-cyan animate-pulse">
+                  ⟳ {activeAdapter.adapter.toUpperCase()}
+                </span>
+              </>
+            )}
           </div>
 
           <button
             onClick={handleSync}
-            disabled={syncing}
+            disabled={isBusy}
             aria-label="Sync all data sources"
             className="px-3 py-1.5 bg-odin-bg-tertiary border border-odin-border rounded text-sm font-mono text-odin-text-primary hover:border-odin-cyan transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {syncing ? '⟳ Syncing...' : '⟳ Sync'}
+            {isBusy ? '⟳ Syncing...' : '⟳ Sync'}
           </button>
 
           <ExportMenu dataType="all" />
