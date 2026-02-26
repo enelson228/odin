@@ -1,12 +1,14 @@
 import { create } from 'zustand';
-import { SyncStatus } from '../../shared/types';
+import type { SyncStatus, AppSettingsPublic } from '../../shared/types';
 import { setDisplayTimezone as applyTimezoneToFormatters } from '../lib/format';
 
 interface AppStore {
   sidebarCollapsed: boolean;
   currentView: string;
   syncStatuses: SyncStatus[];
+  settings: AppSettingsPublic | null;
   displayTimezone: string;
+
   toggleSidebar: () => void;
   setCurrentView: (view: string) => void;
   setSyncStatuses: (statuses: SyncStatus[]) => void;
@@ -22,6 +24,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   sidebarCollapsed: false,
   currentView: 'Dashboard',
   syncStatuses: [],
+  settings: null,
   displayTimezone: '',
 
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
@@ -30,13 +33,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setSyncStatuses: (statuses: SyncStatus[]) => set({ syncStatuses: statuses }),
 
+  /**
+   * Upsert a single adapter's sync status — used by the onSyncProgress listener
+   * so individual adapter updates don't clobber other statuses.
+   */
   updateSyncStatus: (status: SyncStatus) =>
     set((state) => {
-      const idx = state.syncStatuses.findIndex((s) => s.adapter === status.adapter);
-      if (idx >= 0) {
-        const updated = [...state.syncStatuses];
-        updated[idx] = status;
-        return { syncStatuses: updated };
+      const existing = state.syncStatuses.find(s => s.adapter === status.adapter);
+      if (existing) {
+        return {
+          syncStatuses: state.syncStatuses.map(s =>
+            s.adapter === status.adapter ? status : s,
+          ),
+        };
       }
       return { syncStatuses: [...state.syncStatuses, status] };
     }),
@@ -57,9 +66,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   initSettings: async () => {
     try {
-      const s = await window.odinApi.getSettings();
-      applyTimezoneToFormatters(s.displayTimezone);
-      set({ displayTimezone: s.displayTimezone });
+      const settings = await window.odinApi.getSettings();
+      applyTimezoneToFormatters(settings.displayTimezone);
+      set({
+        settings,
+        displayTimezone: settings.displayTimezone ?? '',
+      });
     } catch (error) {
       console.error('Failed to init settings:', error);
     }

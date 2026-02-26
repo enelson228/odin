@@ -21,13 +21,13 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 2,
-    description: 'Remove FK constraint on conflict_events.iso3 to allow disputed territories',
+    description: 'Remove FK constraint from conflict_events.iso3 to allow disputed territories',
     up: (db) => {
-      // SQLite cannot DROP CONSTRAINT, so we recreate the table without it.
+      // SQLite does not support DROP CONSTRAINT — must recreate the table.
       // This allows ACLED events for Kosovo, Taiwan, Palestinian State, etc.
       // to be stored even if those territories are not in the countries table.
       db.exec(`
-        CREATE TABLE IF NOT EXISTS conflict_events_new (
+        CREATE TABLE IF NOT EXISTS conflict_events_v2 (
           id TEXT PRIMARY KEY,
           iso3 TEXT NOT NULL,
           event_date TEXT NOT NULL,
@@ -43,9 +43,13 @@ export const MIGRATIONS: Migration[] = [
           source TEXT,
           source_scale TEXT
         );
-        INSERT OR IGNORE INTO conflict_events_new SELECT * FROM conflict_events;
+        INSERT OR IGNORE INTO conflict_events_v2
+          SELECT id, iso3, event_date, event_type, sub_event_type,
+                 actor1, actor2, location, latitude, longitude,
+                 fatalities, notes, source, source_scale
+          FROM conflict_events;
         DROP TABLE conflict_events;
-        ALTER TABLE conflict_events_new RENAME TO conflict_events;
+        ALTER TABLE conflict_events_v2 RENAME TO conflict_events;
         CREATE INDEX IF NOT EXISTS idx_conflicts_iso3 ON conflict_events(iso3);
         CREATE INDEX IF NOT EXISTS idx_conflicts_date ON conflict_events(event_date);
         CREATE INDEX IF NOT EXISTS idx_conflicts_type ON conflict_events(event_type);

@@ -19,8 +19,10 @@ export function TopBar() {
     .sort()
     .reverse()[0];
 
-  // Adapter currently syncing (updated in real-time via sync:progress events in App.tsx)
-  const activeAdapter = syncStatuses.find((s) => s.status === 'syncing');
+  // Which adapters are currently syncing (updated in real-time via sync:progress events in App.tsx)
+  const activeAdapters = syncStatuses
+    .filter(s => s.status === 'syncing')
+    .map(s => s.adapter);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -34,7 +36,7 @@ export function TopBar() {
     }
   };
 
-  const isBusy = syncing || Boolean(activeAdapter);
+  const isSyncing = syncing || activeAdapters.length > 0;
 
   return (
     <header className="bg-odin-bg-secondary border-b border-odin-border px-6 py-4">
@@ -46,6 +48,14 @@ export function TopBar() {
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Active adapter pulse indicators */}
+          {activeAdapters.length > 0 && (
+            <div className="flex items-center gap-2 text-xs font-mono text-odin-amber">
+              <span className="inline-block w-2 h-2 rounded-full bg-odin-amber animate-pulse" />
+              <span>{activeAdapters.join(', ')}</span>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 text-xs font-mono text-odin-text-tertiary">
             <span>{totalRecords.toLocaleString()} records</span>
             {lastSync && (
@@ -54,23 +64,22 @@ export function TopBar() {
                 <span>Last sync: {formatDateTime(lastSync)}</span>
               </>
             )}
-            {activeAdapter && (
-              <>
-                <span>•</span>
-                <span className="text-odin-cyan animate-pulse">
-                  ⟳ {activeAdapter.adapter.toUpperCase()}
-                </span>
-              </>
-            )}
           </div>
 
           <button
             onClick={handleSync}
-            disabled={isBusy}
+            disabled={isSyncing}
             aria-label="Sync all data sources"
             className="px-3 py-1.5 bg-odin-bg-tertiary border border-odin-border rounded text-sm font-mono text-odin-text-primary hover:border-odin-cyan transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isBusy ? '⟳ Syncing...' : '⟳ Sync'}
+            {isSyncing ? (
+              <span className="flex items-center gap-1">
+                <span className="inline-block animate-spin">⟳</span>
+                <span>Syncing...</span>
+              </span>
+            ) : (
+              '⟳ SYNC ALL'
+            )}
           </button>
 
           <ExportMenu dataType="all" />

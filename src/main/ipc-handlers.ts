@@ -38,7 +38,7 @@ function validateExportPath(filePath: unknown): string {
 }
 
 const KNOWN_ADAPTERS = new Set([
-  'acled', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth', 'ucdp',
+  'acled', 'ucdp', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth',
 ]);
 
 // Token fields are managed internally by the sync scheduler — not writable from renderer.
@@ -92,23 +92,30 @@ export function registerIpcHandlers(
   ipcMain.handle('sync:start', async (_event, adapter?: unknown) => {
     // Await the sync to completion so the renderer knows when it's done.
     // Live status updates are communicated via sync:progress push events.
-    if (adapter !== undefined) {
-      if (typeof adapter !== 'string' || !KNOWN_ADAPTERS.has(adapter)) {
-        throw new Error(`Unknown adapter: ${String(adapter)}`);
+    try {
+      if (adapter !== undefined) {
+        if (typeof adapter !== 'string' || !KNOWN_ADAPTERS.has(adapter)) {
+          throw new Error(`Unknown adapter: ${String(adapter)}`);
+        }
+        await syncScheduler.syncAdapter(adapter);
+      } else {
+        await syncScheduler.syncAll();
       }
-      await syncScheduler.syncAdapter(adapter);
-    } else {
-      await syncScheduler.syncAll();
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[IPC] sync:start error:', message);
+      return { success: false };
     }
-    return { success: true };
   });
 
   ipcMain.handle('sync:status', () => {
     return db.getSyncStatus();
   });
 
-  ipcMain.handle('sync:get-log', () => {
-    return db.getSyncLog(100);
+  ipcMain.handle('sync:get-log', (_event, limit?: unknown) => {
+    const n = typeof limit === 'number' ? limit : 100;
+    return db.getSyncLog(n);
   });
 
   ipcMain.handle('sync:clear-log', () => {

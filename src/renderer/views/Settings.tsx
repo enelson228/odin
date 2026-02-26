@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../stores/app-store';
-import { AppSettingsPublic, SyncLogEntry, SyncStatus } from '../../shared/types';
+import type { AppSettingsPublic, SyncLogEntry, SyncStatus } from '../../shared/types';
 import { Spinner } from '../components/common/Spinner';
-import { SYNC_INTERVAL_OPTIONS } from '../lib/constants';
+import { SYNC_INTERVAL_OPTIONS, TIMEZONE_OPTIONS } from '../lib/constants';
 import { formatDateTime } from '../lib/format';
 
 // ─── Sync Log Panel ───────────────────────────────────────
@@ -200,16 +200,9 @@ function AdapterRow({ adapter, liveStatus, onSync, isSyncing }: AdapterRowProps)
   );
 }
 
-// ─── Timezone list ────────────────────────────────────────
+// ─── All known adapters ───────────────────────────────────
 
-const TIMEZONE_OPTIONS: string[] = (() => {
-  try {
-    return (Intl as { supportedValuesOf?: (key: string) => string[] })
-      .supportedValuesOf?.('timeZone') ?? [];
-  } catch {
-    return [];
-  }
-})();
+const ALL_ADAPTERS = ['acled', 'ucdp', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth'];
 
 // ─── Main Settings View ───────────────────────────────────
 
@@ -227,7 +220,6 @@ export function Settings() {
     mapDefaultZoom: 3,
     displayTimezone: '',
   });
-  // Password is tracked separately — never persisted in renderer state
   const [newPassword, setNewPassword] = useState('');
   // Track which adapters are currently being synced by this view
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
@@ -265,7 +257,6 @@ export function Settings() {
         mapDefaultZoom: settings.mapDefaultZoom,
         displayTimezone: settings.displayTimezone,
       };
-      // Only include the password if the user actually typed one
       if (newPassword.length > 0) {
         payload.acledPassword = newPassword;
       }
@@ -324,6 +315,7 @@ export function Settings() {
 
   return (
     <div className="max-w-3xl space-y-6">
+      {/* ACLED Auth */}
       <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
         <h2 className="text-xl font-bold text-odin-cyan mb-2 font-mono">
           ACLED Authentication
@@ -377,6 +369,7 @@ export function Settings() {
         </div>
       </div>
 
+      {/* Sync Settings */}
       <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
         <h2 className="text-xl font-bold text-odin-cyan mb-6 font-mono">
           Sync Settings
@@ -407,6 +400,34 @@ export function Settings() {
         </div>
       </div>
 
+      {/* Display Settings */}
+      <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
+        <h2 className="text-xl font-bold text-odin-cyan mb-2 font-mono">
+          Display
+        </h2>
+        <p className="text-xs text-odin-text-tertiary mb-6 font-mono">
+          Choose the timezone used to display all timestamps in the app.
+          Defaults to system local time when left empty.
+        </p>
+
+        <div>
+          <label className="block text-sm font-mono text-odin-text-secondary mb-2">
+            Display Timezone
+          </label>
+          <select
+            value={settings.displayTimezone}
+            onChange={(e) => setSettings({ ...settings, displayTimezone: e.target.value })}
+            className="w-full bg-odin-bg-tertiary border border-odin-border rounded px-3 py-2 text-sm font-mono text-odin-text-primary focus:outline-none focus:border-odin-cyan"
+          >
+            <option value="">System local (default)</option>
+            {TIMEZONE_OPTIONS.map((tz) => (
+              <option key={tz} value={tz}>{tz}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Map Defaults */}
       <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
         <h2 className="text-xl font-bold text-odin-cyan mb-6 font-mono">
           Map Defaults
@@ -474,32 +495,7 @@ export function Settings() {
         </div>
       </div>
 
-      <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
-        <h2 className="text-xl font-bold text-odin-cyan mb-2 font-mono">
-          Display
-        </h2>
-        <p className="text-xs text-odin-text-tertiary mb-6 font-mono">
-          Choose the timezone used to display all timestamps in the app.
-          Defaults to system local time when left empty.
-        </p>
-
-        <div>
-          <label className="block text-sm font-mono text-odin-text-secondary mb-2">
-            Display Timezone
-          </label>
-          <select
-            value={settings.displayTimezone}
-            onChange={(e) => setSettings({ ...settings, displayTimezone: e.target.value })}
-            className="w-full bg-odin-bg-tertiary border border-odin-border rounded px-3 py-2 text-sm font-mono text-odin-text-primary focus:outline-none focus:border-odin-cyan"
-          >
-            <option value="">System local (default)</option>
-            {TIMEZONE_OPTIONS.map((tz) => (
-              <option key={tz} value={tz}>{tz}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
+      {/* Manual Sync */}
       <div className="bg-odin-bg-secondary border border-odin-border rounded-lg p-6">
         <h2 className="text-xl font-bold text-odin-cyan mb-2 font-mono">
           Manual Sync
@@ -510,7 +506,7 @@ export function Settings() {
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {(['acled', 'worldbank', 'overpass', 'cia-factbook'] as const).map((adapter) => {
+          {ALL_ADAPTERS.map((adapter) => {
             const liveStatus = syncStatuses.find((s) => s.adapter === adapter);
             return (
               <AdapterRow

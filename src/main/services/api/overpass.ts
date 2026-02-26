@@ -1,10 +1,12 @@
 // ─── Overpass (OSM) Military Installations Adapter ────────────
-// Queries the Overpass API for military-tagged nodes/ways/relations.
-// Uses a single global query with a type regex to target only
-// meaningful installation categories, avoiding per-continent bbox
-// queries that exceed server timeouts on large regions.
+// Queries the Overpass API for military nodes/ways/relations
+// using a single global typed query.
+//
+// IMPORTANT: Uses Node's https.request() directly — NOT fetch() or net.fetch().
+// Both undici and Chromium negotiate HTTP/2 with overpass-api.de and fail
+// silently. https.request() always uses HTTP/1.1 and matches curl behavior.
 
-import * as https from 'https';
+import * as https from 'node:https';
 import { MilitaryInstallation } from '@shared/types';
 import { BaseApiAdapter, FetchPageResult } from './base-adapter';
 
@@ -26,126 +28,43 @@ interface OverpassResponse {
   elements: OSMElement[];
 }
 
+// ── Constants ─────────────────────────────────────────────────
+
+const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+
+// Client timeout must exceed the server's [timeout:300] (300s).
+const CLIENT_TIMEOUT_MS = 360_000; // 6 minutes
+
+// Single global query — no per-continent bboxes which time out.
+const GLOBAL_MILITARY_QUERY = `[out:json][timeout:300][maxsize:536870912];
+(
+  node["military"~"^(base|airfield|naval_base|barracks|training_area|range|checkpoint|fort|camp|bunker|launchpad|storage)$"];
+  way["military"~"^(base|airfield|naval_base|barracks|training_area|range|fort|camp)$"];
+  relation["military"~"^(base|airfield|naval_base|training_area)$"];
+);
+out center tags;`;
+
 // ── Adapter ──────────────────────────────────────────────────
 
 export class OverpassAdapter extends BaseApiAdapter<OSMElement, MilitaryInstallation> {
   name = 'overpass';
-  baseUrl = 'https://overpass-api.de/api/interpreter';
-
-  // Single global query — rate limiting between pages is not applicable.
-  rateLimitMs = 0;
-
-  // Server-side timeout in the query (seconds)
-  private static readonly SERVER_TIMEOUT_S = 300;
-
-  // Client-side timeout must exceed the server timeout
-  private static readonly CLIENT_TIMEOUT_MS = 360_000; // 6 minutes
+  baseUrl = OVERPASS_URL;
+  rateLimitMs = 0; // Single request — no rate limiting needed
 
   /**
-   * Build the global Overpass QL query.
-   *
-   * Uses a regex filter to target only main military installation types,
-   * which dramatically reduces result set size vs. querying any military tag.
-   * Nodes cover individual buildings/positions; ways cover airfields/bases;
-   * relations cover large compound installations.
-   */
-  private buildQuery(): string {
-    const types = [
-      'base', 'airfield', 'naval_base', 'barracks',
-      'training_area', 'range', 'checkpoint', 'fort',
-      'camp', 'bunker', 'launchpad', 'storage',
-    ].join('|');
-
-    const nodeTypes   = `^(${types})$`;
-    const wayTypes    = '^(base|airfield|naval_base|barracks|training_area|range|fort|camp)$';
-    const relTypes    = '^(base|airfield|naval_base|training_area)$';
-
-    return [
-      `[out:json][timeout:${OverpassAdapter.SERVER_TIMEOUT_S}][maxsize:536870912];`,
-      '(',
-      `  node["military"~"${nodeTypes}"];`,
-      `  way["military"~"${wayTypes}"];`,
-      `  relation["military"~"${relTypes}"];`,
-      ');',
-      'out center tags;',
-    ].join('\n');
-  }
-
-  /**
-   * POST to the Overpass API using Node's https.request() directly.
-   *
-   * Both undici (global fetch) and Chromium (net.fetch) negotiate HTTP/2 with
-   * overpass-api.de, which causes connection failures. Node's https.request()
-   * always uses HTTP/1.1 over TLS, matching curl's behaviour.
-   */
-  private httpsPost(url: string, body: string, timeoutMs: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const parsed = new URL(url);
-      const bodyBuf = Buffer.from(body, 'utf8');
-
-      const req = https.request(
-        {
-          hostname: parsed.hostname,
-          path: parsed.pathname + parsed.search,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Content-Length': bodyBuf.length,
-          },
-          timeout: timeoutMs,
-        },
-        (res) => {
-          const chunks: Buffer[] = [];
-          res.on('data', (chunk: Buffer) => chunks.push(chunk));
-          res.on('end', () => {
-            if (res.statusCode && res.statusCode >= 400) {
-              reject(new Error(`overpass: HTTP ${res.statusCode}`));
-            } else {
-              resolve(Buffer.concat(chunks).toString('utf8'));
-            }
-          });
-          res.on('error', reject);
-        },
-      );
-
-      req.on('timeout', () => {
-        req.destroy(new Error(`overpass: request timed out after ${timeoutMs}ms`));
-      });
-      req.on('error', reject);
-
-      req.write(bodyBuf);
-      req.end();
-    });
-  }
-
-  /**
-   * Single-page fetch — the global query returns all results in one response.
-   * hasMore is always false; withRetry in fetchAll handles transient failures.
+   * fetchPage is implemented for interface compliance.
+   * In practice, use fetchAllRegions() which issues a single global query.
    */
   async fetchPage(
-    _params: Record<string, string>
+    _params: Record<string, string>,
   ): Promise<FetchPageResult<OSMElement>> {
-    const query = this.buildQuery();
-    const body = `data=${encodeURIComponent(query)}`;
-
-    const text = await this.httpsPost(this.baseUrl, body, OverpassAdapter.CLIENT_TIMEOUT_MS);
-    const json: OverpassResponse = JSON.parse(text);
-    const elements = json.elements ?? [];
-
-    console.log(`[OverpassAdapter] Global query returned ${elements.length} elements`);
-
-    return {
-      data: elements,
-      hasMore: false, // Single query — no pagination needed
-    };
+    const elements = await this.issueGlobalQuery();
+    return { data: elements, hasMore: false };
   }
 
   /**
    * Normalize a raw OSM element to a MilitaryInstallation.
-   *
-   * Note: `iso3` is left empty here because Overpass does not
-   * provide country codes. It should be filled later by reverse
-   * geocoding with the NaturalEarthAdapter.
+   * iso3 is left empty — to be filled by reverse geocoding later.
    */
   normalize(raw: OSMElement): MilitaryInstallation {
     const lat = raw.lat ?? raw.center?.lat ?? 0;
@@ -164,18 +83,77 @@ export class OverpassAdapter extends BaseApiAdapter<OSMElement, MilitaryInstalla
   }
 
   /**
+   * Issue the single global military installation query.
+   * Uses Node's https.request() to force HTTP/1.1 — Chromium/undici fail
+   * with HTTP/2 negotiation against overpass-api.de.
+   */
+  private issueGlobalQuery(): Promise<OSMElement[]> {
+    return new Promise((resolve, reject) => {
+      const postData = `data=${encodeURIComponent(GLOBAL_MILITARY_QUERY)}`;
+
+      const options: https.RequestOptions = {
+        hostname: 'overpass-api.de',
+        path: '/api/interpreter',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(postData),
+        },
+      };
+
+      console.log('[OverpassAdapter] Issuing single global military query (timeout: 6 min)...');
+
+      const req = https.request(options, (res) => {
+        const chunks: Buffer[] = [];
+
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+        res.on('end', () => {
+          try {
+            if (res.statusCode && res.statusCode >= 400) {
+              reject(new Error(`[OverpassAdapter] HTTP ${res.statusCode}`));
+              return;
+            }
+            const body = Buffer.concat(chunks).toString('utf-8');
+            const json: OverpassResponse = JSON.parse(body);
+            const elements = json.elements ?? [];
+            console.log(`[OverpassAdapter] Received ${elements.length} elements`);
+            resolve(elements);
+          } catch (err) {
+            reject(new Error(`[OverpassAdapter] Failed to parse response: ${err}`));
+          }
+        });
+      });
+
+      req.setTimeout(CLIENT_TIMEOUT_MS, () => {
+        req.destroy(
+          new Error(`[OverpassAdapter] Request timed out after ${CLIENT_TIMEOUT_MS / 1000}s`),
+        );
+      });
+
+      req.on('error', (err) => {
+        reject(new Error(`[OverpassAdapter] Request error: ${err.message}`));
+      });
+
+      req.write(postData);
+      req.end();
+    });
+  }
+
+  /**
    * High-level entry point: issue the global query and return
-   * the deduplicated set of installations.
+   * deduplicated military installations.
    */
   async fetchAllRegions(): Promise<MilitaryInstallation[]> {
     console.log('[OverpassAdapter] Starting global military installation query...');
 
-    const results = await this.fetchAll({});
+    const elements = await this.issueGlobalQuery();
+    const installations = elements.map((el) => this.normalize(el));
 
-    // Deduplicate by id (should not be needed with a single query, but kept as a safeguard)
+    // Deduplicate by id
     const seen = new Set<string>();
     const deduped: MilitaryInstallation[] = [];
-    for (const inst of results) {
+    for (const inst of installations) {
       if (!seen.has(inst.id)) {
         seen.add(inst.id);
         deduped.push(inst);
@@ -184,43 +162,5 @@ export class OverpassAdapter extends BaseApiAdapter<OSMElement, MilitaryInstalla
 
     console.log(`[OverpassAdapter] Total: ${deduped.length} unique installations`);
     return deduped;
-  }
-
-  /**
-   * Query a custom bounding box (useful for per-country queries).
-   */
-  async fetchBBox(
-    south: number,
-    west: number,
-    north: number,
-    east: number
-  ): Promise<MilitaryInstallation[]> {
-    const { south: s, west: w, north: n, east: e } = { south, west, north, east };
-    const query = [
-      `[out:json][timeout:${OverpassAdapter.SERVER_TIMEOUT_S}];`,
-      '(',
-      `  node["military"](${s},${w},${n},${e});`,
-      `  way["military"](${s},${w},${n},${e});`,
-      `  relation["military"](${s},${w},${n},${e});`,
-      ');',
-      'out center tags;',
-    ].join('\n');
-
-    try {
-      const res = await this.rateLimitedFetch(this.baseUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(query)}`,
-      }, OverpassAdapter.CLIENT_TIMEOUT_MS);
-
-      const json: OverpassResponse = await res.json();
-      return (json.elements ?? []).map(el => this.normalize(el));
-    } catch (err) {
-      console.error(
-        `[OverpassAdapter] Error querying custom bbox [${south},${west},${north},${east}]:`,
-        err
-      );
-      return [];
-    }
   }
 }

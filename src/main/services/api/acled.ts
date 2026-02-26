@@ -38,29 +38,31 @@ interface ACLEDApiResponse {
   count: number;
 }
 
-interface ACLEDTokenResponse {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;   // seconds
-  token_type: string;
-}
+// ── OAuth2 token shape ────────────────────────────────────────
 
-// ── Token type ────────────────────────────────────────────────
-
-export interface AcledToken {
+export interface AcledTokens {
   accessToken: string;
   refreshToken: string;
-  expiresAt: number;              // Unix timestamp ms (access token)
-  refreshTokenExpiresAt: number;  // Unix timestamp ms (refresh token, 14 days)
+  tokenExpiry: number;          // Unix ms — access token expiry
+  refreshTokenExpiry: number;   // Unix ms — refresh token expiry
 }
+
+/** @deprecated Use AcledTokens instead */
+export type AcledToken = AcledTokens;
 
 // ── Constants ─────────────────────────────────────────────────
 
-const ACLED_API_BASE     = 'https://acleddata.com/api/acled/read';
-const ACLED_TOKEN_URL    = 'https://acleddata.com/oauth/token';
-const ACLED_CLIENT_ID    = 'acled';
-const REFRESH_BUFFER_MS  = 60_000;                    // Refresh 1 min before expiry
-const REFRESH_TOKEN_TTL  = 14 * 24 * 60 * 60 * 1000; // 14 days in ms
+const ACLED_API_BASE  = 'https://acleddata.com/api/acled/read';
+const ACLED_TOKEN_URL = 'https://acleddata.com/oauth/token';
+
+// 60s before expiry we proactively refresh the access token
+const REFRESH_BUFFER_MS = 60_000;
+
+// Fallback TTLs when the server doesn't return expires_in
+const REFRESH_TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 d
+
+// First sync cap: default to 2 years ago to avoid pulling 500k+ records from 1997.
+const TWO_YEARS_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
 // ── Adapter ──────────────────────────────────────────────────
 
@@ -71,35 +73,47 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
 
   private email: string;
   private password: string;
-  private token: AcledToken | null;
+  private tokens: AcledTokens | null;
 
   private static readonly PAGE_LIMIT = 5000;
 
   /**
    * @param email    ACLED account email
    * @param password ACLED account password
-   * @param token    Existing OAuth token from a previous run (optional)
+   * @param tokens   Existing OAuth2 tokens from a previous run (optional)
    */
-  constructor(email: string, password: string, token?: AcledToken) {
+  constructor(email: string, password: string, tokens?: AcledTokens) {
     super();
     this.email = email;
     this.password = password;
-    this.token = token ?? null;
+    this.tokens = tokens ?? null;
   }
 
-  /** Returns current token so the caller can persist it. */
-  getToken(): AcledToken | null {
-    return this.token;
+  /** Returns current tokens so the caller can persist them. */
+  getTokens(): AcledTokens | null {
+    return this.tokens;
   }
 
-  // ── OAuth 2.0 Auth ─────────────────────────────────────────
+  /** @deprecated Use getTokens() instead */
+  getToken(): AcledTokens | null {
+    return this.tokens;
+  }
 
-  private async authenticate(): Promise<AcledToken> {
+  // ── OAuth2 Auth ─────────────────────────────────────────────
+
+  private async fetchNewTokens(): Promise<AcledTokens> {
+    if (!this.email || !this.password) {
+      throw new Error(
+        'ACLED email and password are required. Configure them in Settings.\n' +
+        'Register at acleddata.com to obtain credentials.',
+      );
+    }
+
     const body = new URLSearchParams({
       grant_type: 'password',
       username: this.email,
       password: this.password,
-      client_id: ACLED_CLIENT_ID,
+      client_id: 'acled',
     });
 
     const res = await fetch(ACLED_TOKEN_URL, {
@@ -110,35 +124,40 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
 
     if (!res.ok) {
       throw new Error(
-        `ACLED authentication failed: HTTP ${res.status}. ` +
+        `ACLED OAuth2 token request failed: HTTP ${res.status}. ` +
         'Check your email and password in Settings (register at acleddata.com).',
       );
     }
 
-    const json = await res.json() as ACLEDTokenResponse;
+    const json = await res.json() as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+    };
 
     if (!json.access_token) {
-      throw new Error('ACLED token response missing access_token');
+      throw new Error('ACLED token response missing access_token field');
     }
 
     const now = Date.now();
-    const token: AcledToken = {
+    const accessTtl = (json.expires_in ?? 86400) * 1000;
+
+    const tokens: AcledTokens = {
       accessToken: json.access_token,
-      refreshToken: json.refresh_token,
-      expiresAt: now + (json.expires_in * 1000),
-      refreshTokenExpiresAt: now + REFRESH_TOKEN_TTL,
+      refreshToken: json.refresh_token ?? '',
+      tokenExpiry: now + accessTtl,
+      refreshTokenExpiry: now + REFRESH_TOKEN_TTL_MS,
     };
 
-    console.log('[AcledAdapter] OAuth2 authentication successful');
-    this.token = token;
-    return token;
+    console.log('[AcledAdapter] OAuth2 tokens obtained');
+    return tokens;
   }
 
-  private async refreshAccessToken(refreshToken: string): Promise<AcledToken> {
+  private async refreshAccessToken(refreshToken: string): Promise<AcledTokens> {
     const body = new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
-      client_id: ACLED_CLIENT_ID,
+      client_id: 'acled',
     });
 
     const res = await fetch(ACLED_TOKEN_URL, {
@@ -148,51 +167,62 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
     });
 
     if (!res.ok) {
-      throw new Error(
-        `ACLED token refresh failed: HTTP ${res.status}. ` +
-        'Please re-enter your credentials in Settings.',
-      );
+      throw new Error(`ACLED token refresh failed: HTTP ${res.status}`);
     }
 
-    const json = await res.json() as ACLEDTokenResponse;
+    const json = await res.json() as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+    };
 
     if (!json.access_token) {
       throw new Error('ACLED refresh response missing access_token');
     }
 
     const now = Date.now();
-    const token: AcledToken = {
+    const accessTtl = (json.expires_in ?? 86400) * 1000;
+
+    const tokens: AcledTokens = {
       accessToken: json.access_token,
-      refreshToken: json.refresh_token || refreshToken,
-      expiresAt: now + (json.expires_in * 1000),
-      // Reset refresh TTL only if a new refresh token was issued
-      refreshTokenExpiresAt: json.refresh_token
-        ? now + REFRESH_TOKEN_TTL
-        : (this.token?.refreshTokenExpiresAt ?? now + REFRESH_TOKEN_TTL),
+      refreshToken: json.refresh_token ?? refreshToken,
+      tokenExpiry: now + accessTtl,
+      // Extend refresh token TTL on each successful refresh
+      refreshTokenExpiry: (this.tokens?.refreshTokenExpiry ?? now) + REFRESH_TOKEN_TTL_MS,
     };
 
-    console.log('[AcledAdapter] Access token refreshed successfully');
-    this.token = token;
-    return token;
+    console.log('[AcledAdapter] OAuth2 access token refreshed');
+    return tokens;
   }
 
-  private async ensureValidToken(): Promise<AcledToken> {
+  /**
+   * Ensures a valid access token is available.
+   * - If the access token expires within REFRESH_BUFFER_MS, refreshes it.
+   * - If the refresh token is expired or missing, falls back to full password re-auth.
+   */
+  private async ensureValidTokens(): Promise<AcledTokens> {
     const now = Date.now();
 
-    if (this.token) {
+    if (this.tokens) {
       // Access token still valid
-      if (now < this.token.expiresAt - REFRESH_BUFFER_MS) {
-        return this.token;
+      if (now < this.tokens.tokenExpiry - REFRESH_BUFFER_MS) {
+        return this.tokens;
       }
 
-      // Access token expiring soon — use refresh token if still valid
-      if (this.token.refreshToken && now < this.token.refreshTokenExpiresAt - REFRESH_BUFFER_MS) {
-        return await this.refreshAccessToken(this.token.refreshToken);
+      // Access token near expiry — try refresh if refresh token is still valid
+      if (this.tokens.refreshToken && now < this.tokens.refreshTokenExpiry) {
+        try {
+          this.tokens = await this.refreshAccessToken(this.tokens.refreshToken);
+          return this.tokens;
+        } catch (err) {
+          console.warn('[AcledAdapter] Token refresh failed, re-authenticating:', err);
+        }
       }
     }
 
-    // No token or both tokens expired — re-authenticate with credentials
-    return await this.authenticate();
+    // Fall back to full password grant
+    this.tokens = await this.fetchNewTokens();
+    return this.tokens;
   }
 
   // ── Data Fetching ──────────────────────────────────────────
@@ -210,7 +240,7 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
       );
     }
 
-    const token = await this.ensureValidToken();
+    const tokens = await this.ensureValidTokens();
     const page = parseInt(params.page ?? '1', 10);
 
     const url = new URL(this.baseUrl);
@@ -229,7 +259,7 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
     try {
       const res = await this.rateLimitedFetch(url.toString(), {
         headers: {
-          Authorization: `Bearer ${token.accessToken}`,
+          Authorization: `Bearer ${tokens.accessToken}`,
         },
       }, 60_000); // 60-second timeout — ACLED can be slow
       const json: ACLEDApiResponse = await res.json();
@@ -276,20 +306,30 @@ export class AcledAdapter extends BaseApiAdapter<ACLEDRawRecord, ConflictEvent> 
     };
   }
 
+  /**
+   * Fetch all conflict events, optionally filtered to events after sinceDate.
+   *
+   * First-sync cap: if no sinceDate is provided, defaults to 2 years ago to
+   * avoid pulling 500k+ records from 1997 to present.
+   *
+   * Subsequent syncs should pass the last completed sync date as sinceDate
+   * for incremental updates.
+   */
   async fetchAllEvents(sinceDate?: string): Promise<ConflictEvent[]> {
-    // If this is the first ever sync (no sinceDate), cap to the last 2 years.
-    // Fetching all ACLED data since 1997 (500k+ events) would time out and exhaust
-    // memory. Subsequent syncs are incremental from the last completed sync date.
-    let effectiveSince = sinceDate;
-    if (!effectiveSince) {
-      const twoYearsAgo = new Date();
-      twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
-      effectiveSince = twoYearsAgo.toISOString().split('T')[0];
-    }
+    // Apply 2-year cap on first sync
+    const effectiveSince = sinceDate ?? new Date(Date.now() - TWO_YEARS_MS)
+      .toISOString()
+      .slice(0, 10);
 
-    const params: Record<string, string> = { page: '1', event_date: effectiveSince };
+    const params: Record<string, string> = {
+      page: '1',
+      event_date: effectiveSince,
+    };
 
-    console.log(`[AcledAdapter] Starting event sync since ${effectiveSince}...`);
+    console.log(
+      `[AcledAdapter] Starting event sync since ${effectiveSince}` +
+      (sinceDate ? ' (incremental)' : ' (first sync — 2-year cap applied)'),
+    );
     const results = await this.fetchAll(params);
     console.log(`[AcledAdapter] Fetched ${results.length} conflict events`);
     return results;

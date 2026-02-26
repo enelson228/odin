@@ -19,7 +19,7 @@ export function App() {
     initSettings();
   }, [initSettings]);
 
-  // Centralized sync status polling — avoids duplicate intervals in Sidebar/TopBar
+  // Centralized sync status polling — keeps status fresh between push events
   useEffect(() => {
     fetchSyncStatuses();
     const interval = setInterval(fetchSyncStatuses, 30_000);

@@ -66,6 +66,9 @@ function setupContentSecurityPolicy(): void {
     const tileSources = 'https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org';
     const fontSources = 'https://fonts.googleapis.com https://fonts.gstatic.com';
     const githubSources = 'https://raw.githubusercontent.com';
+    const apiSources =
+      'https://*.worldbank.org https://acleddata.com https://overpass-api.de ' +
+      'https://ucdpapi.pcr.uu.se https://armstransfers.sipri.org';
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -76,13 +79,13 @@ function setupContentSecurityPolicy(): void {
               "style-src 'self' 'unsafe-inline' http://localhost:* " + fontSources + "; " +
               "style-src-elem 'self' 'unsafe-inline' http://localhost:* " + fontSources + "; " +
               "img-src 'self' data: blob: " + tileSources + "; " +
-              "connect-src 'self' ws://localhost:* http://localhost:* " + tileSources + " https://unpkg.com " + githubSources + "; " +
+              "connect-src 'self' ws://localhost:* http://localhost:* " + tileSources + " https://unpkg.com " + githubSources + " " + apiSources + "; " +
               "font-src 'self' data: " + fontSources + ";"
             : "default-src 'self'; " +
               "script-src 'self'; " +
               "style-src 'self' 'unsafe-inline' " + fontSources + "; " +
               "img-src 'self' data: blob: " + tileSources + "; " +
-              "connect-src 'self' " + tileSources + " " + githubSources + "; " +
+              "connect-src 'self' " + tileSources + " " + githubSources + " " + apiSources + "; " +
               "font-src 'self' data: " + fontSources + ";",
         ],
       },
