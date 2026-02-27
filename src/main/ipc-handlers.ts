@@ -49,7 +49,7 @@ const KNOWN_ADAPTERS = new Set([
 
 // Token fields are managed internally by the sync scheduler — not writable from renderer.
 const WRITABLE_SETTINGS_KEYS = new Set<keyof AppSettings>([
-  'acledEmail', 'acledPassword', 'syncIntervalMinutes', 'mapDefaultCenter', 'mapDefaultZoom',
+  'acledEmail', 'acledPassword', 'ucdpApiKey', 'syncIntervalMinutes', 'mapDefaultCenter', 'mapDefaultZoom',
   'displayTimezone',
 ]);
 

@@ -127,6 +127,11 @@ export class SyncScheduler {
 
         const adapter = new UCDPAdapter();
         adapter.setCountryMap(countryMap);
+        // Get UCDP API key from settings if available
+        const settings = db.getSettings();
+        if (settings.ucdpApiKey) {
+          adapter.setApiKey(settings.ucdpApiKey);
+        }
         const events = await adapter.fetchAllEvents();
         const upserted = db.upsertConflicts(events);
         return { fetched: events.length, upserted };

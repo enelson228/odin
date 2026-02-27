@@ -168,6 +168,7 @@ export interface AppSettings {
   acledRefreshToken: string;          // OAuth2 refresh token (14d TTL, managed automatically)
   acledTokenExpiry: number;           // Access token expiry as Unix timestamp ms
   acledRefreshTokenExpiry: number;    // Refresh token expiry as Unix timestamp ms
+  ucdpApiKey: string;                 // UCDP API key (optional)
   syncIntervalMinutes: number;
   mapDefaultCenter: [number, number];
   mapDefaultZoom: number;

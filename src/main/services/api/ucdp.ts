@@ -70,8 +70,16 @@ export class UCDPAdapter extends BaseApiAdapter<UCDPRawEvent, ConflictEvent> {
   name = 'ucdp';
   baseUrl = 'https://ucdpapi.pcr.uu.se/api/gedevents/25.1';
   rateLimitMs = 500;
+  private apiKey: string = '';
 
   private static readonly PAGE_SIZE = 1000;
+
+  /**
+   * Set the UCDP API key for authenticated requests.
+   */
+  setApiKey(key: string): void {
+    this.apiKey = key;
+  }
 
   /**
    * Map from country name (as returned by UCDP) to ISO3 code.
@@ -95,6 +103,11 @@ export class UCDPAdapter extends BaseApiAdapter<UCDPRawEvent, ConflictEvent> {
     const url = new URL(this.baseUrl);
     url.searchParams.set('pagesize', String(UCDPAdapter.PAGE_SIZE));
     url.searchParams.set('page', String(page));
+
+    // Add API key if configured
+    if (this.apiKey) {
+      url.searchParams.set('key', this.apiKey);
+    }
 
     try {
       const res = await this.rateLimitedFetch(url.toString());

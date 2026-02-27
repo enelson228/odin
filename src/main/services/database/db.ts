@@ -25,6 +25,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   acledRefreshToken: '',
   acledTokenExpiry: 0,
   acledRefreshTokenExpiry: 0,
+  ucdpApiKey: '',
   syncIntervalMinutes: 360,
   mapDefaultCenter: [20, 0],
   mapDefaultZoom: 3,
