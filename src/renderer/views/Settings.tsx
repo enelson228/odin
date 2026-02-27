@@ -202,7 +202,7 @@ function AdapterRow({ adapter, liveStatus, onSync, isSyncing }: AdapterRowProps)
 
 // ─── All known adapters ───────────────────────────────────
 
-const ALL_ADAPTERS = ['acled', 'ucdp', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth'];
+const ALL_ADAPTERS = ['acled', 'ucdp', 'gdelt', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth'];
 
 // ─── Main Settings View ───────────────────────────────────
 
