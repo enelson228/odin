@@ -7,7 +7,7 @@ import { useEffect, useRef } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet.heat';
-import type { ConflictEvent } from '../../../../shared/types';
+import type { ConflictEvent } from '@shared/types';
 
 // Extend L to include the heatLayer factory added by leaflet.heat
 declare module 'leaflet' {
