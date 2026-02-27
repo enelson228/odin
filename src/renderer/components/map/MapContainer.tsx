@@ -1,12 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MapContainer as LeafletMap, useMap } from 'react-leaflet';
 import { useMapStore } from '../../stores/map-store';
-import { VectorTileLayer, useVectorTileProviders, useTileLoadingState } from './VectorTileLayer';
+import { VectorTileLayer, useVectorTileProviders } from './VectorTileLayer';
 import 'leaflet/dist/leaflet.css';
 
 interface MapContainerProps {
   children?: React.ReactNode;
-  showTileLoadingIndicator?: boolean;
 }
 
 function MapViewController() {
@@ -44,23 +43,7 @@ function MapViewController() {
   return null;
 }
 
-function TileLoadingIndicator() {
-  const { isLoading, loadedTiles } = useTileLoadingState();
-
-  if (!isLoading) return null;
-
-  return (
-    <div className="absolute top-4 right-4 z-[1000] bg-odin-bg-secondary/90 backdrop-blur px-3 py-2 rounded border border-odin-border">
-      <div className="flex items-center gap-2 text-xs font-mono text-odin-text-secondary">
-        <div className="w-3 h-3 border border-odin-cyan border-t-transparent rounded-full animate-spin" />
-        <span>Loading tiles...</span>
-        <span className="text-odin-cyan">{loadedTiles} loaded</span>
-      </div>
-    </div>
-  );
-}
-
-export function MapContainer({ children, showTileLoadingIndicator = true }: MapContainerProps) {
+export function MapContainer({ children }: MapContainerProps) {
   const { viewport } = useMapStore();
   const providers = useVectorTileProviders();
   const [selectedProvider, setSelectedProvider] = useState(0);
@@ -80,8 +63,6 @@ export function MapContainer({ children, showTileLoadingIndicator = true }: MapC
         <MapViewController />
         {children}
       </LeafletMap>
-
-      {showTileLoadingIndicator && <TileLoadingIndicator />}
 
       {/* Map style selector */}
       <div className="absolute top-4 left-4 z-[1000]">
