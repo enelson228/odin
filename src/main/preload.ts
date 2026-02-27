@@ -12,6 +12,7 @@ import type {
   AppSettings,
   AppSettingsPublic,
   ExportRequest,
+  PaginatedResult,
 } from '@shared/types';
 
 /**
@@ -26,7 +27,9 @@ export interface OdinApi {
   getCountries(): Promise<Country[]>;
   getCountry(iso3: string): Promise<Country | null>;
   getConflicts(filters?: ConflictFilters): Promise<ConflictEvent[]>;
+  getConflictsPaginated(filters?: ConflictFilters, limit?: number, offset?: number): Promise<PaginatedResult<ConflictEvent>>;
   getArmsTransfers(filters?: ArmsFilters): Promise<ArmsTransfer[]>;
+  getArmsTransfersPaginated(filters?: ArmsFilters, limit?: number, offset?: number): Promise<PaginatedResult<ArmsTransfer>>;
   getInstallations(iso3?: string): Promise<MilitaryInstallation[]>;
   getIndicators(iso3: string): Promise<WorldBankIndicator[]>;
 
@@ -58,8 +61,14 @@ const odinApi: OdinApi = {
   getConflicts: (filters?: ConflictFilters) =>
     ipcRenderer.invoke('db:get-conflicts', filters),
 
+  getConflictsPaginated: (filters?: ConflictFilters, limit = 100, offset = 0) =>
+    ipcRenderer.invoke('db:get-conflicts-paginated', filters, limit, offset),
+
   getArmsTransfers: (filters?: ArmsFilters) =>
     ipcRenderer.invoke('db:get-arms-transfers', filters),
+
+  getArmsTransfersPaginated: (filters?: ArmsFilters, limit = 100, offset = 0) =>
+    ipcRenderer.invoke('db:get-arms-transfers-paginated', filters, limit, offset),
 
   getInstallations: (iso3?: string) =>
     ipcRenderer.invoke('db:get-installations', iso3),

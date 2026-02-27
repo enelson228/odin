@@ -5,7 +5,12 @@ import { ExportService } from '@main/services/export/export';
 import { SyncScheduler } from '@main/services/sync/scheduler';
 import { registerIpcHandlers } from '@main/ipc-handlers';
 import { NaturalEarthAdapter } from '@main/services/api/natural-earth';
+import { getLogger, LogLevel } from '@main/utils/logger';
 import type { Country } from '@shared/types';
+
+const logger = getLogger({
+  level: process.env.NODE_ENV === 'production' ? LogLevel.INFO : LogLevel.DEBUG,
+});
 
 // electron-vite sets is.dev or we can check ELECTRON_RENDERER_URL
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
@@ -100,11 +105,11 @@ function setupContentSecurityPolicy(): void {
 function seedCountriesIfEmpty(db: DatabaseService): void {
   const existing = db.getCountries();
   if (existing.length > 0) {
-    console.log(`[ODIN] Countries table already has ${existing.length} entries, skipping seed.`);
+    logger.info('Database', `Countries table already has ${existing.length} entries, skipping seed.`);
     return;
   }
 
-  console.log('[ODIN] Seeding countries from Natural Earth GeoJSON...');
+  logger.info('Database', 'Seeding countries from Natural Earth GeoJSON...');
 
   // In dev, assets are at project root. In production, extraResources puts them next to the app.
   const assetsDir = isDev
@@ -132,14 +137,12 @@ function seedCountriesIfEmpty(db: DatabaseService): void {
   }));
 
   const count = db.upsertCountries(countries);
-  console.log(`[ODIN] Seeded ${count} countries from Natural Earth data.`);
+  logger.info('Database', `Seeded ${count} countries from Natural Earth data.`);
 }
 
 function initializeDatabase(): DatabaseService {
   const dbPath = path.join(app.getPath('userData'), 'odin.db');
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[ODIN] Database path: ${dbPath}`);
-  }
+  logger.info('Database', `Database path: ${dbPath}`);
 
   const database = new DatabaseService(dbPath);
   database.initSchema();
@@ -194,4 +197,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   syncScheduler?.stop();
   db?.close();
+  logger.shutdown();
 });

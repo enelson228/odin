@@ -3,13 +3,19 @@ import * as path from 'path';
 import type { DatabaseService } from '@main/services/database/db';
 import type { ExportService } from '@main/services/export/export';
 import type { SyncScheduler } from '@main/services/sync/scheduler';
+import { createLogger } from '@main/utils/logger';
 import type {
   ConflictFilters,
   ArmsFilters,
   ExportRequest,
   AppSettings,
   AppSettingsPublic,
+  PaginatedResult,
+  ConflictEvent,
+  ArmsTransfer,
 } from '@shared/types';
+
+const logger = createLogger('IPC');
 
 // ─── Security Helpers ─────────────────────────────────────
 
@@ -75,8 +81,16 @@ export function registerIpcHandlers(
     return db.getConflicts(filters);
   });
 
+  ipcMain.handle('db:get-conflicts-paginated', (_event, filters?: ConflictFilters, limit = 100, offset = 0) => {
+    return db.getConflictsPaginated(filters, limit, offset);
+  });
+
   ipcMain.handle('db:get-arms-transfers', (_event, filters?: ArmsFilters) => {
     return db.getArmsTransfers(filters);
+  });
+
+  ipcMain.handle('db:get-arms-transfers-paginated', (_event, filters?: ArmsFilters, limit = 100, offset = 0) => {
+    return db.getArmsTransfersPaginated(filters, limit, offset);
   });
 
   ipcMain.handle('db:get-installations', (_event, iso3?: string) => {
@@ -103,8 +117,7 @@ export function registerIpcHandlers(
       }
       return { success: true };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error('[IPC] sync:start error:', message);
+      logger.error('sync:start error', err);
       return { success: false };
     }
   });

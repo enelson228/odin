@@ -134,6 +134,9 @@ export interface ConflictFilters {
   dateEnd?: string;
   eventTypes?: string[];
   minFatalities?: number;
+  // Pagination
+  limit?: number;
+  offset?: number;
 }
 
 export interface ArmsFilters {
@@ -142,6 +145,18 @@ export interface ArmsFilters {
   yearStart?: number;
   yearEnd?: number;
   weaponCategories?: string[];
+  // Pagination
+  limit?: number;
+  offset?: number;
+}
+
+// ─── Pagination Types ─────────────────────────────────────
+
+export interface PaginatedResult<T> {
+  data: T[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 // ─── Settings ─────────────────────────────────────────────

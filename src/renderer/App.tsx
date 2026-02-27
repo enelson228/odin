@@ -6,8 +6,15 @@ import { MapView } from './views/MapView';
 import { CountryList } from './views/CountryList';
 import { CountryDetail } from './views/CountryDetail';
 import { Settings } from './views/Settings';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { ROUTES } from './lib/constants';
 import { useAppStore } from './stores/app-store';
+
+// Global error handler for logging errors to main process
+function handleError(error: Error, errorInfo: React.ErrorInfo): void {
+  console.error('[App ErrorBoundary] Global error caught:', error.message);
+  // Could send to main process for logging if needed
+}
 
 export function App() {
   const fetchSyncStatuses = useAppStore(s => s.fetchSyncStatuses);
@@ -39,14 +46,36 @@ export function App() {
   }, [updateSyncStatus, fetchSyncStatuses]);
 
   return (
-    <Shell>
-      <Routes>
-        <Route path={ROUTES.DASHBOARD} element={<Dashboard />} />
-        <Route path={ROUTES.MAP} element={<MapView />} />
-        <Route path={ROUTES.COUNTRIES} element={<CountryList />} />
-        <Route path={ROUTES.COUNTRY_DETAIL} element={<CountryDetail />} />
-        <Route path={ROUTES.SETTINGS} element={<Settings />} />
-      </Routes>
-    </Shell>
+    <ErrorBoundary onError={handleError}>
+      <Shell>
+        <Routes>
+          <Route path={ROUTES.DASHBOARD} element={
+            <ErrorBoundary>
+              <Dashboard />
+            </ErrorBoundary>
+          } />
+          <Route path={ROUTES.MAP} element={
+            <ErrorBoundary>
+              <MapView />
+            </ErrorBoundary>
+          } />
+          <Route path={ROUTES.COUNTRIES} element={
+            <ErrorBoundary>
+              <CountryList />
+            </ErrorBoundary>
+          } />
+          <Route path={ROUTES.COUNTRY_DETAIL} element={
+            <ErrorBoundary>
+              <CountryDetail />
+            </ErrorBoundary>
+          } />
+          <Route path={ROUTES.SETTINGS} element={
+            <ErrorBoundary>
+              <Settings />
+            </ErrorBoundary>
+          } />
+        </Routes>
+      </Shell>
+    </ErrorBoundary>
   );
 }

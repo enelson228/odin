@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { createLogger } from '@main/utils/logger';
 import type {
   Country,
   ConflictEvent,
@@ -10,7 +11,10 @@ import type {
   SyncStatus,
   SyncLogEntry,
   AppSettings,
+  PaginatedResult,
 } from '@shared/types';
+
+const logger = createLogger('Database');
 import schemaSql from './schema.sql?raw';
 import { runMigrations } from './migrations';
 
@@ -75,6 +79,60 @@ export class DatabaseService {
 
   // ─── Conflict Queries ───────────────────────────────────
 
+  /**
+   * Get paginated conflicts - always returns PaginatedResult
+   */
+  getConflictsPaginated(
+    filters?: ConflictFilters,
+    limit = 100,
+    offset = 0,
+  ): PaginatedResult<ConflictEvent> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.iso3 && filters.iso3.length > 0) {
+      const placeholders = filters.iso3.map(() => '?').join(', ');
+      conditions.push(`iso3 IN (${placeholders})`);
+      params.push(...filters.iso3);
+    }
+
+    if (filters?.dateStart) {
+      conditions.push('event_date >= ?');
+      params.push(filters.dateStart);
+    }
+
+    if (filters?.dateEnd) {
+      conditions.push('event_date <= ?');
+      params.push(filters.dateEnd);
+    }
+
+    if (filters?.eventTypes && filters.eventTypes.length > 0) {
+      const placeholders = filters.eventTypes.map(() => '?').join(', ');
+      conditions.push(`event_type IN (${placeholders})`);
+      params.push(...filters.eventTypes);
+    }
+
+    if (filters?.minFatalities !== undefined && filters.minFatalities !== null) {
+      conditions.push('fatalities >= ?');
+      params.push(filters.minFatalities);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Get total count for pagination
+    const countSql = `SELECT COUNT(*) as total FROM conflict_events ${where}`;
+    const countResult = this.db.prepare(countSql).get(...params) as { total: number };
+    const total = countResult.total;
+
+    const sql = `SELECT * FROM conflict_events ${where} ORDER BY event_date DESC LIMIT ? OFFSET ?`;
+    const data = this.db.prepare(sql).all(...params, limit, offset) as ConflictEvent[];
+
+    return { data, total, limit, offset };
+  }
+
+  /**
+   * Get all conflicts (legacy method for backward compatibility)
+   */
   getConflicts(filters?: ConflictFilters): ConflictEvent[] {
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -114,6 +172,61 @@ export class DatabaseService {
 
   // ─── Arms Transfer Queries ──────────────────────────────
 
+  /**
+   * Get paginated arms transfers - always returns PaginatedResult
+   */
+  getArmsTransfersPaginated(
+    filters?: ArmsFilters,
+    limit = 100,
+    offset = 0,
+  ): PaginatedResult<ArmsTransfer> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.supplierIso3 && filters.supplierIso3.length > 0) {
+      const placeholders = filters.supplierIso3.map(() => '?').join(', ');
+      conditions.push(`supplier_iso3 IN (${placeholders})`);
+      params.push(...filters.supplierIso3);
+    }
+
+    if (filters?.recipientIso3 && filters.recipientIso3.length > 0) {
+      const placeholders = filters.recipientIso3.map(() => '?').join(', ');
+      conditions.push(`recipient_iso3 IN (${placeholders})`);
+      params.push(...filters.recipientIso3);
+    }
+
+    if (filters?.yearStart !== undefined && filters.yearStart !== null) {
+      conditions.push('year >= ?');
+      params.push(filters.yearStart);
+    }
+
+    if (filters?.yearEnd !== undefined && filters.yearEnd !== null) {
+      conditions.push('year <= ?');
+      params.push(filters.yearEnd);
+    }
+
+    if (filters?.weaponCategories && filters.weaponCategories.length > 0) {
+      const placeholders = filters.weaponCategories.map(() => '?').join(', ');
+      conditions.push(`weapon_category IN (${placeholders})`);
+      params.push(...filters.weaponCategories);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Get total count for pagination
+    const countSql = `SELECT COUNT(*) as total FROM arms_transfers ${where}`;
+    const countResult = this.db.prepare(countSql).get(...params) as { total: number };
+    const total = countResult.total;
+
+    const sql = `SELECT * FROM arms_transfers ${where} ORDER BY year DESC LIMIT ? OFFSET ?`;
+    const data = this.db.prepare(sql).all(...params, limit, offset) as ArmsTransfer[];
+
+    return { data, total, limit, offset };
+  }
+
+  /**
+   * Get all arms transfers (legacy method for backward compatibility)
+   */
   getArmsTransfers(filters?: ArmsFilters): ArmsTransfer[] {
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -364,7 +477,7 @@ export class DatabaseService {
           });
           count++;
         } catch (err) {
-          console.warn(`[DB] Skipping conflict event ${event.id}: ${err instanceof Error ? err.message : err}`);
+          logger.warn(`Skipping conflict event ${event.id}`, { error: err instanceof Error ? err.message : String(err) });
           skipped++;
         }
       }
@@ -372,7 +485,7 @@ export class DatabaseService {
 
     upsert();
     if (skipped > 0) {
-      console.warn(`[db.upsertConflicts] Skipped ${skipped} events (null iso3 or constraint violation)`);
+      logger.warn(`Skipped ${skipped} events due to null iso3 or constraint violation`);
     }
     return count;
   }

@@ -1,10 +1,12 @@
-import React, { useEffect, useRef } from 'react';
-import { MapContainer as LeafletMap, TileLayer, useMap } from 'react-leaflet';
+import React, { useEffect, useRef, useState } from 'react';
+import { MapContainer as LeafletMap, useMap } from 'react-leaflet';
 import { useMapStore } from '../../stores/map-store';
+import { VectorTileLayer, useVectorTileProviders, useTileLoadingState } from './VectorTileLayer';
 import 'leaflet/dist/leaflet.css';
 
 interface MapContainerProps {
   children?: React.ReactNode;
+  showTileLoadingIndicator?: boolean;
 }
 
 function MapViewController() {
@@ -42,8 +44,26 @@ function MapViewController() {
   return null;
 }
 
-export function MapContainer({ children }: MapContainerProps) {
+function TileLoadingIndicator() {
+  const { isLoading, loadedTiles } = useTileLoadingState();
+
+  if (!isLoading) return null;
+
+  return (
+    <div className="absolute top-4 right-4 z-[1000] bg-odin-bg-secondary/90 backdrop-blur px-3 py-2 rounded border border-odin-border">
+      <div className="flex items-center gap-2 text-xs font-mono text-odin-text-secondary">
+        <div className="w-3 h-3 border border-odin-cyan border-t-transparent rounded-full animate-spin" />
+        <span>Loading tiles...</span>
+        <span className="text-odin-cyan">{loadedTiles} loaded</span>
+      </div>
+    </div>
+  );
+}
+
+export function MapContainer({ children, showTileLoadingIndicator = true }: MapContainerProps) {
   const { viewport } = useMapStore();
+  const providers = useVectorTileProviders();
+  const [selectedProvider, setSelectedProvider] = useState(0);
 
   return (
     <div className="h-full w-full relative">
@@ -53,14 +73,30 @@ export function MapContainer({ children }: MapContainerProps) {
         style={{ height: '100%', width: '100%' }}
         zoomControl={true}
         attributionControl={false}
+        // Performance optimizations for large datasets
+        preferCanvas={true}
       >
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        />
+        <VectorTileLayer provider={providers[selectedProvider]} />
         <MapViewController />
         {children}
       </LeafletMap>
+
+      {showTileLoadingIndicator && <TileLoadingIndicator />}
+
+      {/* Map style selector */}
+      <div className="absolute top-4 left-4 z-[1000]">
+        <select
+          value={selectedProvider}
+          onChange={(e) => setSelectedProvider(Number(e.target.value))}
+          className="bg-odin-bg-secondary/90 backdrop-blur text-odin-text-primary text-xs font-mono px-3 py-2 rounded border border-odin-border focus:outline-none focus:border-odin-cyan cursor-pointer"
+        >
+          {providers.map((provider, idx) => (
+            <option key={idx} value={idx}>
+              {provider.name}
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }
