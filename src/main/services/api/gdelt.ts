@@ -88,11 +88,12 @@ function getIso3(countryCode: string): string | null {
 
 export class GDELTAdapter extends BaseApiAdapter<GDELTRawEvent, ConflictEvent> {
   name = 'gdelt';
-  baseUrl = 'https://api.gdeltproject.org/api/v2/doc/doc';
-  rateLimitMs = 2000;
+  // Using the older v1 API which is more stable
+  baseUrl = 'https://api.gdeltproject.org/api/v1/doc';
+  rateLimitMs = 3000;
 
   private static readonly PAGE_SIZE = 250;
-  private static readonly MAX_RECORDS = 25000; // 100 pages max
+  private static readonly MAX_RECORDS = 2500; // 10 pages max
 
   private countryMap: Map<string, string> = new Map();
 
@@ -113,10 +114,10 @@ export class GDELTAdapter extends BaseApiAdapter<GDELTRawEvent, ConflictEvent> {
     url.searchParams.set('maxrecords', String(GDELTAdapter.PAGE_SIZE));
     url.searchParams.set('page', String(page));
     
-    // Query for conflict/violence events (CAMEO codes 18-20, 03-05)
-    // Also include protests (14-15) and strategic developments (01-02)
+    // Query for conflict/violence events (CAMEO codes 18-20 = violence against civilians)
+    // Using simpler query for better reliability
     url.searchParams.set('query', 
-      '(eventcode:18 OR eventcode:19 OR eventcode:20 OR eventcode:03 OR eventcode:04 OR eventcode:05) AND (-isrootevent:1)'
+      'eventcode:18 OR eventcode:19 OR eventcode:20'
     );
 
     try {
