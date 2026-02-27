@@ -3,6 +3,7 @@ import type { DatabaseService } from '@main/services/database/db';
 import type { SyncStatus } from '@shared/types';
 import { AcledAdapter, AcledTokens } from '@main/services/api/acled';
 import { UCDPAdapter } from '@main/services/api/ucdp';
+import { GDELTAdapter } from '@main/services/api/gdelt';
 import { WorldBankAdapter } from '@main/services/api/world-bank';
 import { OverpassAdapter } from '@main/services/api/overpass';
 import { CiaFactbookAdapter } from '@main/services/api/cia-factbook';
@@ -133,6 +134,28 @@ export class SyncScheduler {
           adapter.setApiKey(settings.ucdpApiKey);
         }
         const events = await adapter.fetchAllEvents();
+        const upserted = db.upsertConflicts(events);
+        return { fetched: events.length, upserted };
+      },
+    });
+
+    // GDELT conflict events adapter (free, no auth required)
+    this.adapters.set('gdelt', {
+      name: 'gdelt',
+      async run(db: DatabaseService) {
+        const countries = db.getCountries();
+        const countryMap = new Map<string, string>();
+        for (const c of countries) {
+          countryMap.set(c.name.toLowerCase(), c.iso3);
+        }
+
+        const adapter = new GDELTAdapter();
+        adapter.setCountryMap(countryMap);
+        
+        // Get last sync date for incremental sync
+        const sinceDate = db.getLastSuccessfulSync('gdelt') ?? undefined;
+        
+        const events = await adapter.fetchAllEvents(sinceDate);
         const upserted = db.upsertConflicts(events);
         return { fetched: events.length, upserted };
       },

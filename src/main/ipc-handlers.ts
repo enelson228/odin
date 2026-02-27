@@ -44,7 +44,7 @@ function validateExportPath(filePath: unknown): string {
 }
 
 const KNOWN_ADAPTERS = new Set([
-  'acled', 'ucdp', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth',
+  'acled', 'ucdp', 'gdelt', 'worldbank', 'overpass', 'cia-factbook', 'sipri', 'natural-earth',
 ]);
 
 // Token fields are managed internally by the sync scheduler — not writable from renderer.
